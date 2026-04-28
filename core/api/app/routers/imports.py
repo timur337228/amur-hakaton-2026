@@ -3,17 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_db
-from ..models import ImportBatch, ImportErrorLog, RawFile
+from ..models import BudgetFact, ImportBatch, ImportErrorLog, RawFile
 from ..schemas import (
+    BudgetFactPreviewRow,
     ImportBatchResponse,
     ImportErrorResponse,
     ImportFilesResponse,
+    ImportPreviewResponse,
+    ImportStatsResponse,
     LocalImportRequest,
     RawFileResponse,
 )
@@ -107,6 +110,69 @@ def get_import_files(batch_id: str, db: Session = Depends(get_db)) -> ImportFile
     return ImportFilesResponse(batch_id=batch_id, files=[RawFileResponse.model_validate(file, from_attributes=True) for file in files])
 
 
+@router.get("/{batch_id}/stats", response_model=ImportStatsResponse)
+def get_import_stats(batch_id: str, db: Session = Depends(get_db)) -> ImportStatsResponse:
+    batch = db.get(ImportBatch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Import batch not found.")
+
+    date_min, date_max, rows_count = db.execute(
+        select(func.min(BudgetFact.date), func.max(BudgetFact.date), func.count(BudgetFact.id)).where(
+            BudgetFact.batch_id == batch_id
+        )
+    ).one()
+
+    return ImportStatsResponse(
+        batch_id=batch_id,
+        date_min=date_min,
+        date_max=date_max,
+        rows_count=int(rows_count or 0),
+        metrics=_distinct_strings(db, BudgetFact.metric, batch_id),
+        source_groups=_distinct_strings(db, BudgetFact.source_group, batch_id),
+        total_files=batch.total_files,
+        csv_files=batch.csv_files,
+        raw_rows_imported=batch.raw_rows_imported,
+        normalized_rows_imported=batch.normalized_rows_imported,
+        error_count=batch.error_count,
+    )
+
+
+@router.get("/{batch_id}/preview", response_model=ImportPreviewResponse)
+def get_import_preview(
+    batch_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> ImportPreviewResponse:
+    if not db.get(ImportBatch, batch_id):
+        raise HTTPException(status_code=404, detail="Import batch not found.")
+
+    rows_count = int(
+        db.execute(select(func.count(BudgetFact.id)).where(BudgetFact.batch_id == batch_id)).scalar_one()
+    )
+    facts = (
+        db.execute(
+            select(BudgetFact)
+            .where(BudgetFact.batch_id == batch_id)
+            .order_by(BudgetFact.date, BudgetFact.id)
+            .limit(limit)
+            .offset(offset)
+        )
+        .scalars()
+        .all()
+    )
+
+    rows = [BudgetFactPreviewRow.model_validate(fact, from_attributes=True) for fact in facts]
+    return ImportPreviewResponse(
+        batch_id=batch_id,
+        rows_count=rows_count,
+        returned_rows=len(rows),
+        limit=limit,
+        offset=offset,
+        rows=rows,
+    )
+
+
 @router.get("/{batch_id}/errors", response_model=list[ImportErrorResponse])
 def get_import_errors(batch_id: str, db: Session = Depends(get_db)) -> list[ImportErrorResponse]:
     if not db.get(ImportBatch, batch_id):
@@ -143,6 +209,18 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _distinct_strings(db: Session, column, batch_id: str, limit: int | None = None) -> list[str]:
+    stmt = (
+        select(column)
+        .where(BudgetFact.batch_id == batch_id, column.is_not(None), column != "")
+        .distinct()
+        .order_by(column)
+    )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return [str(value) for value in db.execute(stmt).scalars().all()]
 
 
 def _batch_response(batch: ImportBatch) -> ImportBatchResponse:

@@ -8,8 +8,10 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..models import ImportBatch
 from ..schemas import (
     AnalyticsExportRequest,
+    AnalyticsFilterOptionsResponse,
     AnalyticsOptionsResponse,
     AnalyticsQueryRequest,
     AnalyticsQueryResponse,
@@ -17,6 +19,7 @@ from ..schemas import (
 )
 from ..services.analytics import (
     AnalyticsValidationError,
+    analytics_filter_options,
     analytics_options,
     distinct_field_values,
     run_analytics_query,
@@ -55,6 +58,17 @@ def export_analytics_xlsx(payload: AnalyticsExportRequest, db: Session = Depends
 @router.get("/options", response_model=AnalyticsOptionsResponse)
 def get_analytics_options() -> dict:
     return analytics_options()
+
+
+@router.get("/filter-options", response_model=AnalyticsFilterOptionsResponse)
+def get_filter_options(
+    batch_id: str,
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+) -> AnalyticsFilterOptionsResponse:
+    if not db.get(ImportBatch, batch_id):
+        raise HTTPException(status_code=404, detail="Import batch not found.")
+    return analytics_filter_options(db, batch_id=batch_id, limit=limit)
 
 
 @router.get("/values", response_model=AnalyticsValuesResponse)

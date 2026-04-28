@@ -17,7 +17,8 @@ os.environ["STORAGE_DIR"] = "storage_test"
 
 from core.api.app.db import Base, SessionLocal, engine  # noqa: E402
 from core.api.app.models import BudgetFact, ImportBatch  # noqa: E402
-from core.api.app.routers.analytics import export_analytics_xlsx  # noqa: E402
+from core.api.app.routers.analytics import export_analytics_xlsx, get_filter_options  # noqa: E402
+from core.api.app.routers.imports import get_import_preview, get_import_stats  # noqa: E402
 from core.api.app.schemas import AnalyticsExportRequest, AnalyticsFilters, AnalyticsQueryRequest  # noqa: E402
 from core.api.app.services.analytics import distinct_field_values, run_analytics_query  # noqa: E402
 from core.api.app.services.xlsx_export import XLSX_MEDIA_TYPE, build_analytics_xlsx  # noqa: E402
@@ -28,7 +29,18 @@ class AnalyticsTests(unittest.TestCase):
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
         with SessionLocal() as db:
-            db.add(ImportBatch(id="batch-1", input_type="test", status="completed"))
+            db.add(
+                ImportBatch(
+                    id="batch-1",
+                    input_type="test",
+                    status="completed",
+                    total_files=3,
+                    csv_files=3,
+                    raw_rows_imported=5,
+                    normalized_rows_imported=5,
+                    error_count=0,
+                )
+            )
             db.add_all(
                 [
                     _fact(
@@ -118,6 +130,64 @@ class AnalyticsTests(unittest.TestCase):
             values = distinct_field_values(db, batch_id="batch-1", field="object_name", query="Благо", limit=10)
 
         self.assertEqual(values, ["Бюджет города Благовещенска"])
+
+    def test_import_stats_endpoint_returns_batch_summary(self) -> None:
+        with SessionLocal() as db:
+            response = get_import_stats("batch-1", db)
+
+        self.assertEqual(response.batch_id, "batch-1")
+        self.assertEqual(response.date_min, date(2025, 1, 10))
+        self.assertEqual(response.date_max, date(2025, 3, 1))
+        self.assertEqual(response.rows_count, 5)
+        self.assertEqual(response.metrics, ["cash_payments", "contract_amount", "limits"])
+        self.assertEqual(response.source_groups, ["gz", "rchb"])
+        self.assertEqual(response.total_files, 3)
+        self.assertEqual(response.csv_files, 3)
+        self.assertEqual(response.raw_rows_imported, 5)
+        self.assertEqual(response.normalized_rows_imported, 5)
+        self.assertEqual(response.error_count, 0)
+
+    def test_import_preview_endpoint_returns_normalized_rows(self) -> None:
+        with SessionLocal() as db:
+            response = get_import_preview("batch-1", limit=2, offset=0, db=db)
+
+        self.assertEqual(response.batch_id, "batch-1")
+        self.assertEqual(response.rows_count, 5)
+        self.assertEqual(response.returned_rows, 2)
+        self.assertEqual(response.limit, 2)
+        self.assertEqual(response.offset, 0)
+        self.assertEqual([row.metric for row in response.rows], ["limits", "cash_payments"])
+        self.assertEqual(response.rows[0].kfsr_code, "0502")
+
+    def test_import_stats_endpoint_returns_404_for_missing_batch(self) -> None:
+        with SessionLocal() as db:
+            with self.assertRaises(HTTPException) as error:
+                get_import_stats("missing-batch", db)
+
+        self.assertEqual(error.exception.status_code, 404)
+
+    def test_filter_options_endpoint_returns_frontend_values(self) -> None:
+        with SessionLocal() as db:
+            response = get_filter_options("batch-1", limit=20, db=db)
+
+        self.assertEqual(response.batch_id, "batch-1")
+        self.assertEqual(response.date_min, date(2025, 1, 10))
+        self.assertEqual(response.date_max, date(2025, 3, 1))
+        self.assertEqual(response.limit_per_field, 20)
+        self.assertEqual(response.metrics, ["cash_payments", "contract_amount", "limits"])
+        self.assertEqual(response.source_groups, ["gz", "rchb"])
+        self.assertIn("Бюджет города Благовещенска", response.objects)
+        self.assertIn("Бюджет города Благовещенска", response.budgets)
+        self.assertEqual(response.organizations, ["Администрация"])
+        self.assertEqual(response.kfsr_codes, ["0502"])
+        self.assertEqual(response.document_numbers, ["Ф.2025.0003"])
+
+    def test_filter_options_endpoint_returns_404_for_missing_batch(self) -> None:
+        with SessionLocal() as db:
+            with self.assertRaises(HTTPException) as error:
+                get_filter_options("missing-batch", db=db)
+
+        self.assertEqual(error.exception.status_code, 404)
 
     def test_build_xlsx_export_contains_sheets_and_data(self) -> None:
         request = AnalyticsQueryRequest(

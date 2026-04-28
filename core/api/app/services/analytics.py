@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..models import BudgetFact
 from ..schemas import (
     AnalyticsCharts,
+    AnalyticsFilterOptionsResponse,
     AnalyticsMeta,
     AnalyticsQueryRequest,
     AnalyticsQueryResponse,
@@ -91,6 +92,24 @@ DISTINCT_VALUE_FIELDS = {
     "document_id": BudgetFact.document_id,
 }
 
+FILTER_OPTION_FIELDS = {
+    "metrics": BudgetFact.metric,
+    "source_groups": BudgetFact.source_group,
+    "organizations": BudgetFact.organization_name,
+    "objects": BudgetFact.object_name,
+    "budgets": BudgetFact.budget_name,
+    "kfsr_codes": BudgetFact.kfsr_code,
+    "kcsr_codes": BudgetFact.kcsr_code,
+    "kvr_codes": BudgetFact.kvr_code,
+    "kvsr_codes": BudgetFact.kvsr_code,
+    "kesr_codes": BudgetFact.kesr_code,
+    "kosgu_codes": BudgetFact.kosgu_code,
+    "purpose_codes": BudgetFact.purpose_code,
+    "funding_sources": BudgetFact.funding_source,
+    "document_numbers": BudgetFact.document_number,
+    "document_ids": BudgetFact.document_id,
+}
+
 
 class AnalyticsValidationError(ValueError):
     pass
@@ -157,6 +176,24 @@ def analytics_options() -> dict:
         "group_by": GROUP_BY_LABELS,
         "filter_fields": FILTER_FIELD_LABELS,
     }
+
+
+def analytics_filter_options(db: Session, batch_id: str, limit: int = 200) -> AnalyticsFilterOptionsResponse:
+    date_min, date_max = db.execute(
+        select(func.min(BudgetFact.date), func.max(BudgetFact.date)).where(BudgetFact.batch_id == batch_id)
+    ).one()
+    values = {
+        field_name: _distinct_values(db, column, [BudgetFact.batch_id == batch_id], limit=limit)
+        for field_name, column in FILTER_OPTION_FIELDS.items()
+    }
+
+    return AnalyticsFilterOptionsResponse(
+        batch_id=batch_id,
+        date_min=date_min,
+        date_max=date_max,
+        limit_per_field=limit,
+        **values,
+    )
 
 
 def _build_conditions(request: AnalyticsQueryRequest, metrics: list[str] | None) -> list:
@@ -273,8 +310,10 @@ def _charts(db: Session, conditions: list) -> AnalyticsCharts:
     return AnalyticsCharts(timeseries=timeseries, by_metric=by_metric)
 
 
-def _distinct_values(db: Session, column, conditions: list) -> list[str]:
+def _distinct_values(db: Session, column, conditions: list, limit: int | None = None) -> list[str]:
     stmt = select(column).where(*conditions, column.is_not(None), column != "").distinct().order_by(column)
+    if limit is not None:
+        stmt = stmt.limit(limit)
     return [str(value) for value in db.execute(stmt).scalars().all()]
 
 
