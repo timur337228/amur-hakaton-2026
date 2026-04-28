@@ -1,0 +1,40 @@
+{
+  "task": "budget_query_to_json",
+  "generator": "scripts/generate_budget_sft_assets.py",
+  "random_seed": 42,
+  "train_records": 426,
+  "validation_records": 80,
+  "total_records": 506,
+  "base_model": "yandex/YandexGPT-5-Lite-8B-pretrain",
+  "files": {
+    "train": "training/llm_sft/budget_query_sft_train.jsonl",
+    "validation": "training/llm_sft/budget_query_sft_val.jsonl",
+    "readme": "training/llm_sft/README.md",
+    "notebook": "notebooks/yandexgpt5_lite_budget_query_sft.ipynb"
+  },
+  "schema": {
+    "root_keys": [
+      "date_from",
+      "date_to",
+      "metrics",
+      "filters",
+      "group_by"
+    ],
+    "filter_keys": [
+      "source_groups",
+      "object_query",
+      "budget_query",
+      "organization_query",
+      "document_id",
+      "document_number",
+      "kfsr_code",
+      "kcsr_code",
+      "kvr_code",
+      "kvsr_code",
+      "kesr_code",
+      "kosgu_code",
+      "purpose_code",
+      "funding_source"
+    ]
+  }
+}

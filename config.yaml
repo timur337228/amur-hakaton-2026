@@ -1,2 +1,8 @@
 llm:
   model: deepseek-v4-flash
+
+# choice local or cloud
+whisper: 
+  local: false
+  # whisper-v3-turbo, whisper-v3
+  model_name: whisper-v3-turbo
