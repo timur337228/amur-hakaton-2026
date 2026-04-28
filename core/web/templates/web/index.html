@@ -1,3 +1,4 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -7,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="{% static 'web/app.css' %}">
 </head>
 <body>
   <div class="app-shell">
@@ -239,6 +240,9 @@
       <div id="toast" class="toast hidden"></div>
     </main>
   </div>
-  <script src="/static/app.js" defer></script>
+  <script>
+    window.BUDGET_API_BASE_URL = "{{ budget_api_base_url|escapejs }}";
+  </script>
+  <script src="{% static 'web/app.js' %}" defer></script>
 </body>
 </html>

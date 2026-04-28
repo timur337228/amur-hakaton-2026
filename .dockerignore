@@ -1,0 +1,13 @@
+.git
+.gitignore
+.venv
+.pytest_cache
+.mypy_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.test_tmp
+storage
+storage_test
+

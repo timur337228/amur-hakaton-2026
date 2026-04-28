@@ -1,3 +1,5 @@
+const API_BASE_URL = (window.BUDGET_API_BASE_URL || "").replace(/\/$/, "");
+
 const state = {
   batchId: localStorage.getItem("budgetAnalytics.batchId") || "",
   filterOptions: null,
@@ -102,7 +104,7 @@ async function importLocalPath() {
     return;
   }
   setBadge(elements.importStatusBadge, "импорт...", "warn");
-  const response = await fetchJson("/api/v1/imports/local-path", {
+  const response = await fetchJson(apiUrl("/api/v1/imports/local-path"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path }),
@@ -118,7 +120,7 @@ async function importArchive(event) {
   setBadge(elements.importStatusBadge, "загрузка...", "warn");
   const formData = new FormData();
   formData.append("file", file);
-  const response = await fetchJson("/api/v1/imports/archive", {
+  const response = await fetchJson(apiUrl("/api/v1/imports/archive"), {
     method: "POST",
     body: formData,
   });
@@ -137,7 +139,7 @@ async function importFolder(event) {
     formData.append("files", file, file.name);
     formData.append("relative_paths", file.webkitRelativePath || file.name);
   }
-  const response = await fetchJson("/api/v1/imports/files", {
+  const response = await fetchJson(apiUrl("/api/v1/imports/files"), {
     method: "POST",
     body: formData,
   });
@@ -165,9 +167,9 @@ async function loadBatch(batchId) {
   setBadge(elements.batchStatus, "загрузка...", "warn");
 
   const [stats, preview, filterOptions] = await Promise.all([
-    fetchJson(`/api/v1/imports/${batchId}/stats`),
-    fetchJson(`/api/v1/imports/${batchId}/preview?limit=20&offset=0`),
-    fetchJson(`/api/v1/analytics/filter-options?batch_id=${encodeURIComponent(batchId)}&limit=80`),
+    fetchJson(apiUrl(`/api/v1/imports/${batchId}/stats`)),
+    fetchJson(apiUrl(`/api/v1/imports/${batchId}/preview?limit=20&offset=0`)),
+    fetchJson(apiUrl(`/api/v1/analytics/filter-options?batch_id=${encodeURIComponent(batchId)}&limit=80`)),
   ]);
 
   state.filterOptions = filterOptions;
@@ -260,22 +262,28 @@ function fillDatalist(element, values) {
 async function resolveTextRequest() {
   ensureBatch();
   const payload = buildRequestPayload();
-  const response = await fetchJson("/api/v1/analytics/resolve-text", {
+  const response = await fetchJson(apiUrl("/api/v1/analytics/resolve-text"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+  if (response.warning) {
+    showToast(response.warning);
+  }
   renderResolvePreview(response);
 }
 
 async function runQuery() {
   ensureBatch();
   const payload = buildRequestPayload();
-  const response = await fetchJson("/api/v1/analytics/query", {
+  const response = await fetchJson(apiUrl("/api/v1/analytics/query"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+  if (response.meta?.warning) {
+    showToast(response.meta.warning);
+  }
   state.resolvedRequest = response.meta?.resolved_request || payload;
   setBadge(elements.queryStatus, `${formatInt(response.meta.rows_count)} строк`, "ok");
   setBadge(elements.llmBadge, response.meta.llm_applied ? "LLM + фильтры" : "параметры", response.meta.llm_applied ? "ok" : "muted");
@@ -293,7 +301,7 @@ async function runQuery() {
 async function exportXlsx() {
   ensureBatch();
   const payload = buildRequestPayload();
-  const response = await fetch("/api/v1/analytics/export/xlsx", {
+  const response = await fetch(apiUrl("/api/v1/analytics/export/xlsx"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -534,6 +542,10 @@ function ensureBatch() {
   if (!state.batchId) {
     throw new Error("Сначала загрузи или выбери batch.");
   }
+}
+
+function apiUrl(path) {
+  return `${API_BASE_URL}${path}`;
 }
 
 async function fetchJson(url, options = {}) {

@@ -70,9 +70,11 @@ reports/
 generated_reports/
 storage/
 storage_test/
+storage_test*/
 .test_tmp/
 tmp/
 temp/
+.codex
 
 # Large/imported source files
 *.zip
@@ -83,3 +85,4 @@ temp/
 
 # Keep placeholders if needed
 !.gitkeep
+storage_test*/

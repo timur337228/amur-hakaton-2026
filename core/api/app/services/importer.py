@@ -32,6 +32,8 @@ class ImportService:
     def __init__(self, db: Session):
         self.db = db
         self.settings = get_settings()
+        self._seen_agreement_keys: set[tuple] = set()
+        self._seen_agreement_fact_keys: set[tuple] = set()
 
     def create_batch(self, input_type: str, original_name: str | None) -> ImportBatch:
         batch = ImportBatch(
@@ -130,6 +132,7 @@ class ImportService:
 
         try:
             parsed = parse_csv_file(path, relative_path, raw_file.source_group)
+            self._deduplicate_parsed_rows(raw_file.source_group, parsed)
             raw_file.status = "processed"
             raw_file.encoding = parsed.encoding
             raw_file.delimiter = parsed.delimiter
@@ -181,6 +184,31 @@ class ImportService:
         _insert_mappings(self.db, ContractBudgetLine, parsed.contract_budget_lines, common)
         _insert_mappings(self.db, Payment, parsed.payments, common)
         _insert_mappings(self.db, InstitutionPayment, parsed.institution_payments, common)
+
+    def _deduplicate_parsed_rows(self, source_group: str, parsed) -> None:
+        if source_group != "agreements":
+            return
+
+        unique_agreements: list[dict] = []
+        for row in parsed.agreements:
+            key = _agreement_key(row)
+            if key in self._seen_agreement_keys:
+                continue
+            self._seen_agreement_keys.add(key)
+            unique_agreements.append(row)
+        parsed.agreements = unique_agreements
+
+        unique_facts: list[dict] = []
+        for row in parsed.budget_facts:
+            if row.get("source_group") != "agreements" or row.get("metric") != "agreement_amount":
+                unique_facts.append(row)
+                continue
+            key = _agreement_fact_key(row)
+            if key in self._seen_agreement_fact_keys:
+                continue
+            self._seen_agreement_fact_keys.add(key)
+            unique_facts.append(row)
+        parsed.budget_facts = unique_facts
 
     def _fail_batch(self, batch: ImportBatch, message: str) -> None:
         batch.status = "failed"
@@ -243,3 +271,26 @@ def _sha256(path: Path) -> str:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _agreement_key(row: dict) -> tuple:
+    return (
+        row.get("document_id") or "",
+        row.get("reg_number") or "",
+        row.get("close_date"),
+        row.get("amount_1year"),
+        row.get("recipient_name") or "",
+        row.get("budget_name") or "",
+    )
+
+
+def _agreement_fact_key(row: dict) -> tuple:
+    return (
+        row.get("document_id") or "",
+        row.get("document_number") or "",
+        row.get("date"),
+        row.get("value"),
+        row.get("object_name") or "",
+        row.get("budget_name") or "",
+        row.get("metric") or "",
+    )

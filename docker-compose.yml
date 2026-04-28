@@ -1,0 +1,66 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: budget-analytics-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-budget_analytics}
+      POSTGRES_USER: ${POSTGRES_USER:-budget_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-budget_app_dev}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-budget_app} -d ${POSTGRES_DB:-budget_analytics}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+  api:
+    build:
+      context: .
+    container_name: budget-analytics-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-budget_app}:${POSTGRES_PASSWORD:-budget_app_dev}@db:5432/${POSTGRES_DB:-budget_analytics}
+      DATABASE_SYNC_URL: postgresql+psycopg://${POSTGRES_USER:-budget_app}:${POSTGRES_PASSWORD:-budget_app_dev}@db:5432/${POSTGRES_DB:-budget_analytics}
+      STORAGE_DIR: /app/storage
+      ALLOW_LOCAL_IMPORT: ${ALLOW_LOCAL_IMPORT:-true}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000,http://localhost:8001,http://127.0.0.1:8001}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.302.ai/v1/chat/completions}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
+    command: >
+      uvicorn core.api.app.main:app
+      --host 0.0.0.0
+      --port 8000
+    volumes:
+      - ./storage:/app/storage
+      - ${PROJECT_FILE_HOST_PATH:-./project_file}:/app/project_file
+    ports:
+      - "8000:8000"
+
+  web:
+    build:
+      context: .
+    container_name: budget-analytics-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-budget-analytics-dev-secret-key}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-true}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      BUDGET_API_BASE_URL: ${BUDGET_API_BASE_URL:-http://localhost:8000}
+    command: >
+      python manage.py runserver 0.0.0.0:8001
+    ports:
+      - "8001:8001"
+
+volumes:
+  postgres_data:

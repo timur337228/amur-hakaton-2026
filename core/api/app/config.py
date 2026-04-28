@@ -81,6 +81,7 @@ class Settings:
     storage_dir: Path
     database_url: str
     allow_local_import: bool
+    cors_allowed_origins: tuple[str, ...]
     llm_model: str | None
     llm_api_key: str | None
     llm_base_url: str
@@ -108,14 +109,27 @@ def get_settings() -> Settings:
         or os.getenv("THREE_ZERO_TWO_API_KEY")
         or os.getenv("API_KEY_302AI")
     )
+    cors_allow_origins = _split_csv_env(
+        os.getenv(
+            "CORS_ALLOW_ORIGINS",
+            "http://localhost:8000,http://127.0.0.1:8000,http://localhost:8001,http://127.0.0.1:8001",
+        )
+    )
 
     return Settings(
         project_root=project_root,
         storage_dir=storage_dir,
         database_url=_sync_database_url(),
         allow_local_import=os.getenv("ALLOW_LOCAL_IMPORT", "true").lower() in {"1", "true", "yes", "on"},
+        cors_allowed_origins=tuple(cors_allow_origins),
         llm_model=llm_model,
         llm_api_key=llm_api_key,
         llm_base_url=os.getenv("LLM_BASE_URL", "https://api.302.ai/v1/chat/completions"),
         llm_timeout_seconds=int(os.getenv("LLM_TIMEOUT_SECONDS", "60")),
     )
+
+
+def _split_csv_env(raw_value: str | None) -> list[str]:
+    if not raw_value:
+        return []
+    return [item.strip().rstrip("/") for item in raw_value.split(",") if item.strip()]

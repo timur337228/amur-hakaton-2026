@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import unittest
+from dataclasses import dataclass
 
-from core.api.app.schemas import AnalyticsFilterOptionsResponse
+from core.api.app.schemas import AnalyticsFilterOptionsResponse, AnalyticsQueryRequest
 from core.api.app.services.llm import resolve_text_query_to_request_patch
 
 
@@ -11,6 +12,12 @@ def _has_live_llm_config() -> bool:
     key_names = ("LLM_API_KEY", "OPENAI_API_KEY", "THREE_ZERO_TWO_API_KEY", "API_KEY_302AI")
     has_key = any(os.getenv(name) for name in key_names)
     return os.getenv("RUN_LIVE_LLM_TESTS", "").lower() in {"1", "true", "yes", "on"} and has_key
+
+
+@dataclass(frozen=True)
+class LLMQueryCase:
+    text_query: str
+    expected_request: dict
 
 
 @unittest.skipUnless(_has_live_llm_config(), "Live LLM tests require RUN_LIVE_LLM_TESTS=true and an API key")
@@ -37,25 +44,65 @@ class LiveLLMTests(unittest.TestCase):
             document_numbers=["Ф.2025.0003"],
             document_ids=[],
         )
+        self.cases = [
+            LLMQueryCase(
+                text_query="Покажи лимиты по Благовещенску по месяцам",
+                expected_request={
+                    "metrics": ["limits"],
+                    "filters": {"object_query": "Благовещенск"},
+                    "group_by": ["month"],
+                },
+            ),
+            LLMQueryCase(
+                text_query="Покажи сумму контрактов по источнику gz",
+                expected_request={
+                    "metrics": ["contract_amount"],
+                    "filters": {"source_groups": ["gz"]},
+                },
+            ),
+            LLMQueryCase(
+                text_query="Покажи кассовые выплаты по 0502",
+                expected_request={
+                    "metrics": ["cash_payments"],
+                    "filters": {"kfsr_code": "0502"},
+                },
+            ),
+        ]
 
-    def test_live_text_query_resolves_metric_and_object(self) -> None:
-        result = resolve_text_query_to_request_patch(
-            text_query="Покажи лимиты по Благовещенску по месяцам",
-            filter_options=self.filter_options,
-        )
+    def test_live_text_queries_map_to_api_requests(self) -> None:
+        for case in self.cases:
+            with self.subTest(text_query=case.text_query):
+                result = resolve_text_query_to_request_patch(
+                    text_query=case.text_query,
+                    filter_options=self.filter_options,
+                )
+                actual_request = _normalize_request_patch(result, text_query=case.text_query)
+                self.assertEqual(actual_request, case.expected_request)
 
-        self.assertIn("limits", result.metrics or [])
-        self.assertEqual(result.filters.object_query, "Благовещенск")
-        self.assertIn("month", result.group_by or [])
 
-    def test_live_text_query_resolves_contracts(self) -> None:
-        result = resolve_text_query_to_request_patch(
-            text_query="Покажи сумму контрактов по источнику gz",
-            filter_options=self.filter_options,
-        )
-
-        self.assertIn("contract_amount", result.metrics or [])
-        self.assertIn("gz", result.filters.source_groups or [])
+def _normalize_request_patch(result, *, text_query: str) -> dict:
+    request = AnalyticsQueryRequest(batch_id="live-test-batch")
+    normalized = request.model_copy(
+        update={
+            "metrics": result.metrics,
+            "date_from": result.date_from,
+            "date_to": result.date_to,
+            "group_by": result.group_by or ["month"],
+            "filters": result.filters,
+        }
+    )
+    payload = normalized.model_dump(mode="json", exclude_none=True)
+    payload.pop("batch_id", None)
+    payload.pop("text_query", None)
+    payload.pop("limit", None)
+    payload.pop("offset", None)
+    payload.pop("include_rows", None)
+    payload.pop("include_charts", None)
+    lowered = text_query.lower().replace("ё", "е")
+    mentions_grouping = any(token in lowered for token in ("по месяц", "помесяч", "по год", "ежегод", "по дня", "по дат"))
+    if payload.get("group_by") == ["month"] and not mentions_grouping:
+        payload.pop("group_by", None)
+    return payload
 
 
 if __name__ == "__main__":

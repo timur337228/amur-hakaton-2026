@@ -172,6 +172,7 @@ class AnalyticsMeta(BaseModel):
     llm_applied: bool = False
     text_query: str | None = None
     resolved_request: dict | None = None
+    warning: str | None = None
 
 
 class AnalyticsQueryResponse(BaseModel):
@@ -230,3 +231,4 @@ class AnalyticsResolveTextResponse(BaseModel):
     llm_applied: bool
     llm_interpretation: AnalyticsLLMInterpretation | None = None
     resolved_request: dict
+    warning: str | None = None

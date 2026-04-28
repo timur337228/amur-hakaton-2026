@@ -18,7 +18,7 @@ from ..schemas import (
     AnalyticsRow,
     AnalyticsTimeseriesPoint,
 )
-from .llm import resolve_text_query_to_request_patch
+from .llm import LLMConfigurationError, LLMServiceError, resolve_text_query_to_request_patch
 
 
 METRIC_LABELS = {
@@ -150,44 +150,58 @@ def run_analytics_query(db: Session, request: AnalyticsQueryRequest) -> Analytic
 
 
 def run_analytics_request(db: Session, request: AnalyticsQueryRequest) -> AnalyticsQueryResponse:
-    resolved_request, llm_patch, llm_applied = resolve_analytics_request_details(db, request)
+    resolved_request, llm_patch, llm_applied, warning = resolve_analytics_request_details(db, request)
     response = run_analytics_query(db, resolved_request)
     response.meta.llm_applied = llm_applied
     response.meta.text_query = request.text_query
     response.meta.resolved_request = _serialize_resolved_request(resolved_request)
+    response.meta.warning = warning
     return response
 
 
 def resolve_analytics_request(db: Session, request: AnalyticsQueryRequest) -> tuple[AnalyticsQueryRequest, bool]:
-    resolved_request, _, llm_applied = resolve_analytics_request_details(db, request)
+    resolved_request, _, llm_applied, _ = resolve_analytics_request_details(db, request)
     return resolved_request, llm_applied
 
 
 def resolve_analytics_text(db: Session, request: AnalyticsQueryRequest) -> AnalyticsResolveTextResponse:
-    resolved_request, llm_patch, llm_applied = resolve_analytics_request_details(db, request)
+    resolved_request, llm_patch, llm_applied, warning = resolve_analytics_request_details(db, request)
     return AnalyticsResolveTextResponse(
         batch_id=request.batch_id,
         text_query=request.text_query,
         llm_applied=llm_applied,
         llm_interpretation=llm_patch,
         resolved_request=_serialize_resolved_request(resolved_request),
+        warning=warning,
     )
 
 
 def resolve_analytics_request_details(
     db: Session,
     request: AnalyticsQueryRequest,
-) -> tuple[AnalyticsQueryRequest, AnalyticsLLMInterpretation | None, bool]:
+) -> tuple[AnalyticsQueryRequest, AnalyticsLLMInterpretation | None, bool, str | None]:
+    text_query = _normalize_optional_text(request.text_query)
     llm_patch = None
-    if request.text_query:
+    warning = None
+    if text_query:
         filter_options = analytics_filter_options(db, batch_id=request.batch_id, limit=50)
-        llm_patch = resolve_text_query_to_request_patch(
-            text_query=request.text_query,
-            filter_options=filter_options,
-        )
+        try:
+            llm_patch = resolve_text_query_to_request_patch(
+                text_query=text_query,
+                filter_options=filter_options,
+            )
+        except (LLMConfigurationError, LLMServiceError) as exc:
+            warning = (
+                "LLM временно недоступен. Текстовый запрос не был интерпретирован, "
+                "поэтому использованы только ручные фильтры."
+            )
+            explicit_request = request.model_copy(update={"text_query": None})
+            resolved_request = _merge_request_with_patch(explicit_request, None)
+            return resolved_request, None, False, f"{warning} Причина: {exc}"
 
-    resolved_request = _merge_request_with_patch(request, llm_patch)
-    return resolved_request, llm_patch, llm_patch is not None
+    normalized_request = request.model_copy(update={"text_query": text_query})
+    resolved_request = _merge_request_with_patch(normalized_request, llm_patch)
+    return resolved_request, llm_patch, llm_patch is not None, warning
 
 
 def distinct_field_values(
@@ -304,7 +318,10 @@ def _merge_request_with_patch(
     for field_name in explicit_fields:
         if field_name == "filters":
             continue
-        update_data[field_name] = getattr(request, field_name)
+        value = getattr(request, field_name)
+        if value is None:
+            continue
+        update_data[field_name] = value
     if update_data:
         resolved = resolved.model_copy(update=update_data)
 
@@ -470,3 +487,10 @@ def _to_decimal(value) -> Decimal:
     if isinstance(value, Decimal):
         return value.quantize(Decimal("0.01"))
     return Decimal(str(value or 0)).quantize(Decimal("0.01"))
+
+
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = value.strip()
+    return text or None

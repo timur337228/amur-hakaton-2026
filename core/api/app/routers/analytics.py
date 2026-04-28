@@ -25,9 +25,7 @@ from ..services.analytics import (
     distinct_field_values,
     resolve_analytics_text,
     run_analytics_request,
-    run_analytics_query,
 )
-from ..services.llm import LLMConfigurationError, LLMServiceError
 from ..services.xlsx_export import XLSX_MEDIA_TYPE, build_analytics_xlsx
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
@@ -39,10 +37,6 @@ def query_analytics(payload: AnalyticsQueryRequest, db: Session = Depends(get_db
         return run_analytics_request(db, payload)
     except AnalyticsValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except LLMConfigurationError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except LLMServiceError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/resolve-text", response_model=AnalyticsResolveTextResponse)
@@ -51,10 +45,6 @@ def resolve_text(payload: AnalyticsQueryRequest, db: Session = Depends(get_db)) 
         return resolve_analytics_text(db, payload)
     except AnalyticsValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except LLMConfigurationError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except LLMServiceError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/export/xlsx")
@@ -64,10 +54,6 @@ def export_analytics_xlsx(payload: AnalyticsExportRequest, db: Session = Depends
         result = run_analytics_request(db, query_payload)
     except AnalyticsValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except LLMConfigurationError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except LLMServiceError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     content = build_analytics_xlsx(result)
     filename = _export_filename(payload.batch_id)
