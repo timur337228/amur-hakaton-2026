@@ -22,8 +22,10 @@ from ..services.analytics import (
     analytics_filter_options,
     analytics_options,
     distinct_field_values,
+    run_analytics_request,
     run_analytics_query,
 )
+from ..services.llm import LLMConfigurationError, LLMServiceError
 from ..services.xlsx_export import XLSX_MEDIA_TYPE, build_analytics_xlsx
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
@@ -32,18 +34,26 @@ router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
 @router.post("/query", response_model=AnalyticsQueryResponse)
 def query_analytics(payload: AnalyticsQueryRequest, db: Session = Depends(get_db)) -> AnalyticsQueryResponse:
     try:
-        return run_analytics_query(db, payload)
+        return run_analytics_request(db, payload)
     except AnalyticsValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LLMConfigurationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except LLMServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/export/xlsx")
 def export_analytics_xlsx(payload: AnalyticsExportRequest, db: Session = Depends(get_db)) -> Response:
     try:
         query_payload = payload.model_copy(update={"include_rows": True, "include_charts": True})
-        result = run_analytics_query(db, query_payload)
+        result = run_analytics_request(db, query_payload)
     except AnalyticsValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LLMConfigurationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except LLMServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     content = build_analytics_xlsx(result)
     filename = _export_filename(payload.batch_id)

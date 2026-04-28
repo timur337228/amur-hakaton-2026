@@ -6,6 +6,7 @@ from datetime import date
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 from zipfile import ZipFile
 
 from fastapi import HTTPException
@@ -17,10 +18,16 @@ os.environ["STORAGE_DIR"] = "storage_test"
 
 from core.api.app.db import Base, SessionLocal, engine  # noqa: E402
 from core.api.app.models import BudgetFact, ImportBatch  # noqa: E402
-from core.api.app.routers.analytics import export_analytics_xlsx, get_filter_options  # noqa: E402
+from core.api.app.routers.analytics import export_analytics_xlsx, get_filter_options, query_analytics  # noqa: E402
 from core.api.app.routers.imports import get_import_preview, get_import_stats  # noqa: E402
-from core.api.app.schemas import AnalyticsExportRequest, AnalyticsFilters, AnalyticsQueryRequest  # noqa: E402
-from core.api.app.services.analytics import distinct_field_values, run_analytics_query  # noqa: E402
+from core.api.app.schemas import (  # noqa: E402
+    AnalyticsExportRequest,
+    AnalyticsFilters,
+    AnalyticsLLMInterpretation,
+    AnalyticsQueryRequest,
+)
+from core.api.app.services.analytics import distinct_field_values, resolve_analytics_request, run_analytics_query  # noqa: E402
+from core.api.app.services.llm import LLMConfigurationError  # noqa: E402
 from core.api.app.services.xlsx_export import XLSX_MEDIA_TYPE, build_analytics_xlsx  # noqa: E402
 
 
@@ -188,6 +195,77 @@ class AnalyticsTests(unittest.TestCase):
                 get_filter_options("missing-batch", db=db)
 
         self.assertEqual(error.exception.status_code, 404)
+
+    def test_resolve_analytics_request_merges_llm_and_explicit_fields(self) -> None:
+        request = AnalyticsQueryRequest(
+            batch_id="batch-1",
+            text_query="Покажи расходы по Благовещенску по годам",
+            metrics=["limits"],
+            filters=AnalyticsFilters(source_groups=["rchb"], kfsr_code="0502"),
+        )
+
+        llm_patch = AnalyticsLLMInterpretation(
+            metrics=["cash_payments"],
+            filters=AnalyticsFilters(object_query="Благовещенск"),
+            group_by=["year"],
+        )
+
+        with patch(
+            "core.api.app.services.analytics.resolve_text_query_to_request_patch",
+            return_value=llm_patch,
+        ):
+            with SessionLocal() as db:
+                resolved, llm_applied = resolve_analytics_request(db, request)
+
+        self.assertTrue(llm_applied)
+        self.assertEqual(resolved.metrics, ["limits"])
+        self.assertEqual(resolved.group_by, ["year"])
+        self.assertEqual(resolved.filters.object_query, "Благовещенск")
+        self.assertEqual(resolved.filters.source_groups, ["rchb"])
+        self.assertEqual(resolved.filters.kfsr_code, "0502")
+
+    def test_query_endpoint_with_text_only_uses_llm_resolution(self) -> None:
+        payload = AnalyticsQueryRequest(batch_id="batch-1", text_query="Покажи лимиты по Благовещенску")
+        llm_patch = AnalyticsLLMInterpretation(
+            metrics=["limits"],
+            filters=AnalyticsFilters(object_query="Благовещенск"),
+            group_by=["month"],
+        )
+
+        with patch(
+            "core.api.app.services.analytics.resolve_text_query_to_request_patch",
+            return_value=llm_patch,
+        ):
+            with SessionLocal() as db:
+                response = query_analytics(payload, db)
+
+        self.assertTrue(response.meta.llm_applied)
+        self.assertEqual(response.meta.text_query, "Покажи лимиты по Благовещенску")
+        self.assertEqual(response.meta.resolved_request["metrics"], ["limits"])
+        self.assertEqual(response.summary["limits"], Decimal("300.00"))
+
+    def test_query_endpoint_without_text_keeps_plain_parameter_mode(self) -> None:
+        payload = AnalyticsQueryRequest(batch_id="batch-1", metrics=["contract_amount"])
+
+        with SessionLocal() as db:
+            response = query_analytics(payload, db)
+
+        self.assertFalse(response.meta.llm_applied)
+        self.assertIsNone(response.meta.text_query)
+        self.assertEqual(response.summary["contract_amount"], Decimal("500.00"))
+
+    def test_query_endpoint_returns_500_when_llm_is_not_configured(self) -> None:
+        payload = AnalyticsQueryRequest(batch_id="batch-1", text_query="Покажи что-нибудь")
+
+        with patch(
+            "core.api.app.services.analytics.resolve_text_query_to_request_patch",
+            side_effect=LLMConfigurationError("LLM model is not configured in config.yaml."),
+        ):
+            with SessionLocal() as db:
+                with self.assertRaises(HTTPException) as error:
+                    query_analytics(payload, db)
+
+        self.assertEqual(error.exception.status_code, 500)
 
     def test_build_xlsx_export_contains_sheets_and_data(self) -> None:
         request = AnalyticsQueryRequest(

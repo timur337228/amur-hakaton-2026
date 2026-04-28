@@ -32,26 +32,90 @@ def _sync_database_url() -> str:
     return url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
 
 
+def _load_yaml_config(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+
+    result: dict[str, object] = {}
+    stack: list[tuple[int, dict[str, object]]] = [(-1, result)]
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+        line = raw_line.strip()
+        if ":" not in line:
+            continue
+
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+
+        while len(stack) > 1 and indent <= stack[-1][0]:
+            stack.pop()
+
+        parent = stack[-1][1]
+        if not value:
+            nested: dict[str, object] = {}
+            parent[key] = nested
+            stack.append((indent, nested))
+        else:
+            parent[key] = value.strip('"').strip("'")
+
+    return result
+
+
+def _yaml_value(config: dict[str, object], *path: str) -> str | None:
+    current: object = config
+    for key in path:
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    return current if isinstance(current, str) else None
+
+
 @dataclass(frozen=True)
 class Settings:
     project_root: Path
     storage_dir: Path
     database_url: str
     allow_local_import: bool
+    llm_model: str | None
+    llm_api_key: str | None
+    llm_base_url: str
+    llm_timeout_seconds: int
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     project_root = Path(__file__).resolve().parents[3]
     _load_env_file(project_root / ".env")
+    yaml_config = _load_yaml_config(project_root / "config.yaml")
 
     storage_dir = Path(os.getenv("STORAGE_DIR", "storage"))
     if not storage_dir.is_absolute():
         storage_dir = project_root / storage_dir
+
+    llm_model = (
+        _yaml_value(yaml_config, "llm", "model")
+        or _yaml_value(yaml_config, "model")
+        or os.getenv("LLM_MODEL")
+    )
+    llm_api_key = (
+        os.getenv("LLM_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or os.getenv("THREE_ZERO_TWO_API_KEY")
+        or os.getenv("API_KEY_302AI")
+    )
 
     return Settings(
         project_root=project_root,
         storage_dir=storage_dir,
         database_url=_sync_database_url(),
         allow_local_import=os.getenv("ALLOW_LOCAL_IMPORT", "true").lower() in {"1", "true", "yes", "on"},
+        llm_model=llm_model,
+        llm_api_key=llm_api_key,
+        llm_base_url=os.getenv("LLM_BASE_URL", "https://api.302.ai/v1/chat/completions"),
+        llm_timeout_seconds=int(os.getenv("LLM_TIMEOUT_SECONDS", "60")),
     )

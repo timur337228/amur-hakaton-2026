@@ -9,12 +9,15 @@ from ..models import BudgetFact
 from ..schemas import (
     AnalyticsCharts,
     AnalyticsFilterOptionsResponse,
+    AnalyticsFilters,
+    AnalyticsLLMInterpretation,
     AnalyticsMeta,
     AnalyticsQueryRequest,
     AnalyticsQueryResponse,
     AnalyticsRow,
     AnalyticsTimeseriesPoint,
 )
+from .llm import resolve_text_query_to_request_patch
 
 
 METRIC_LABELS = {
@@ -145,6 +148,28 @@ def run_analytics_query(db: Session, request: AnalyticsQueryRequest) -> Analytic
     )
 
 
+def run_analytics_request(db: Session, request: AnalyticsQueryRequest) -> AnalyticsQueryResponse:
+    resolved_request, llm_applied = resolve_analytics_request(db, request)
+    response = run_analytics_query(db, resolved_request)
+    response.meta.llm_applied = llm_applied
+    response.meta.text_query = request.text_query
+    response.meta.resolved_request = _serialize_resolved_request(resolved_request)
+    return response
+
+
+def resolve_analytics_request(db: Session, request: AnalyticsQueryRequest) -> tuple[AnalyticsQueryRequest, bool]:
+    llm_patch = None
+    if request.text_query:
+        filter_options = analytics_filter_options(db, batch_id=request.batch_id, limit=50)
+        llm_patch = resolve_text_query_to_request_patch(
+            text_query=request.text_query,
+            filter_options=filter_options,
+        )
+
+    resolved_request = _merge_request_with_patch(request, llm_patch)
+    return resolved_request, llm_patch is not None
+
+
 def distinct_field_values(
     db: Session,
     batch_id: str,
@@ -236,6 +261,50 @@ def _build_conditions(request: AnalyticsQueryRequest, metrics: list[str] | None)
     return conditions
 
 
+def _merge_request_with_patch(
+    request: AnalyticsQueryRequest,
+    patch: AnalyticsLLMInterpretation | None,
+) -> AnalyticsQueryRequest:
+    resolved = AnalyticsQueryRequest(batch_id=request.batch_id)
+    if patch is not None:
+        patch_data = patch.model_dump(exclude_none=True)
+        resolved = AnalyticsQueryRequest.model_validate(
+            {
+                **resolved.model_dump(mode="python"),
+                **patch_data,
+                "batch_id": request.batch_id,
+            }
+        )
+
+    explicit_fields = set(request.model_fields_set)
+    if "text_query" in explicit_fields:
+        explicit_fields.remove("text_query")
+
+    update_data: dict[str, object] = {}
+    for field_name in explicit_fields:
+        if field_name == "filters":
+            continue
+        update_data[field_name] = getattr(request, field_name)
+    if update_data:
+        resolved = resolved.model_copy(update=update_data)
+
+    merged_filters = dict(resolved.filters.model_dump(exclude_none=True))
+    explicit_filter_fields = set(request.filters.model_fields_set)
+    for field_name in explicit_filter_fields:
+        value = getattr(request.filters, field_name)
+        if value is not None:
+            merged_filters[field_name] = value
+    resolved_filters = AnalyticsFilters.model_validate(merged_filters)
+
+    return resolved.model_copy(
+        update={
+            "batch_id": request.batch_id,
+            "text_query": request.text_query,
+            "filters": resolved_filters,
+        }
+    )
+
+
 def _summary(db: Session, conditions: list) -> dict[str, Decimal]:
     stmt = (
         select(BudgetFact.metric, func.coalesce(func.sum(BudgetFact.value), 0))
@@ -315,6 +384,10 @@ def _distinct_values(db: Session, column, conditions: list, limit: int | None = 
     if limit is not None:
         stmt = stmt.limit(limit)
     return [str(value) for value in db.execute(stmt).scalars().all()]
+
+
+def _serialize_resolved_request(request: AnalyticsQueryRequest) -> dict[str, object]:
+    return request.model_dump(exclude={"text_query"}, exclude_none=True, mode="json")
 
 
 def _group_pairs(group_by: list[str]) -> list[tuple[str, object]]:

@@ -124,6 +124,7 @@ class AnalyticsFilters(BaseModel):
 
 class AnalyticsQueryRequest(BaseModel):
     batch_id: str
+    text_query: str | None = None
     date_from: DateType | None = None
     date_to: DateType | None = None
     metrics: list[str] | None = None
@@ -168,6 +169,9 @@ class AnalyticsMeta(BaseModel):
     group_by: list[str]
     date_from: DateType | None = None
     date_to: DateType | None = None
+    llm_applied: bool = False
+    text_query: str | None = None
+    resolved_request: dict | None = None
 
 
 class AnalyticsQueryResponse(BaseModel):
@@ -210,3 +214,11 @@ class AnalyticsFilterOptionsResponse(BaseModel):
     funding_sources: list[str]
     document_numbers: list[str]
     document_ids: list[str]
+
+
+class AnalyticsLLMInterpretation(BaseModel):
+    date_from: DateType | None = None
+    date_to: DateType | None = None
+    metrics: list[str] | None = None
+    filters: AnalyticsFilters = Field(default_factory=AnalyticsFilters)
+    group_by: list[str] | None = None
