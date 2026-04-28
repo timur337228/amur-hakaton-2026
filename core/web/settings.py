@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from core.api.app.config import get_settings
+
 
 def _split_csv_env(raw_value: str | None) -> list[str]:
     if not raw_value:
@@ -48,3 +50,4 @@ STATICFILES_DIRS = [
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 BUDGET_API_BASE_URL = os.getenv("BUDGET_API_BASE_URL", "http://localhost:8000").rstrip("/")
+BUDGET_DEPLOY_MODE = get_settings().deploy_mode

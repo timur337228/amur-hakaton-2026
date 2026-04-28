@@ -1,4 +1,5 @@
 const API_BASE_URL = (window.BUDGET_API_BASE_URL || "").replace(/\/$/, "");
+const DEPLOY_MODE = Boolean(window.BUDGET_DEPLOY_MODE);
 const IMPORT_TERMINAL_STATUSES = new Set(["completed", "completed_with_errors", "failed"]);
 const ARCHIVE_EXTENSIONS = [".zip", ".rar", ".7z"];
 const state = {
@@ -86,10 +87,12 @@ async function initialize() {
 }
 
 function bindEvents() {
-  elements.chooseArchiveBtn.addEventListener("click", () => elements.archiveInput.click());
-  elements.chooseFolderBtn.addEventListener("click", () => elements.folderInput.click());
-  elements.archiveInput.addEventListener("change", wrapAsync(handleArchiveSelection));
-  elements.folderInput.addEventListener("change", wrapAsync(handleFolderSelection));
+  if (!DEPLOY_MODE) {
+    elements.chooseArchiveBtn.addEventListener("click", () => elements.archiveInput.click());
+    elements.chooseFolderBtn.addEventListener("click", () => elements.folderInput.click());
+    elements.archiveInput.addEventListener("change", wrapAsync(handleArchiveSelection));
+    elements.folderInput.addEventListener("change", wrapAsync(handleFolderSelection));
+  }
   elements.recordAudioBtn.addEventListener("click", wrapAsync(handleVoiceButtonClick));
   elements.recordAudioBtn.addEventListener("pointerdown", wrapAsync(handleVoicePointerDown));
   elements.recordAudioBtn.addEventListener("pointerup", wrapAsync(handleVoicePointerUp));
@@ -111,6 +114,9 @@ function bindEvents() {
     elements.dropzone.addEventListener(eventName, (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (DEPLOY_MODE) {
+        return;
+      }
       elements.dropzone.classList.add("is-active");
     });
   });
@@ -312,6 +318,10 @@ async function handleVoicePointerLeave(event) {
 }
 
 async function handleDrop(event) {
+  if (DEPLOY_MODE) {
+    showToast("В режиме деплоя загрузка файлов отключена.");
+    return;
+  }
   elements.dropzone.classList.remove("is-active");
   const payload = await detectDroppedPayload(event.dataTransfer);
   if (!payload) {
@@ -402,6 +412,10 @@ async function readAllDirectoryEntries(reader) {
 }
 
 async function uploadArchiveFile(file) {
+  if (DEPLOY_MODE) {
+    showToast("В режиме деплоя загрузка файлов отключена.");
+    return;
+  }
   if (!isSupportedArchive(file.name)) {
     showToast("Поддерживаются только архивы .zip, .rar и .7z.");
     return;
@@ -420,6 +434,10 @@ async function uploadArchiveFile(file) {
 }
 
 async function uploadFolderFiles(files) {
+  if (DEPLOY_MODE) {
+    showToast("В режиме деплоя загрузка файлов отключена.");
+    return;
+  }
   setBadge(elements.importStatusBadge, "загрузка папки", "warn");
   const formData = new FormData();
   for (const item of files) {

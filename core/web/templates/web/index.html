@@ -33,16 +33,34 @@
           <span id="import-status-badge" class="badge muted">ожидание</span>
         </div>
 
-        <div id="import-dropzone" class="dropzone" tabindex="0" role="button" aria-label="Перетащите архив или папку">
+        <div
+          id="import-dropzone"
+          class="dropzone{% if budget_deploy_mode %} is-disabled{% endif %}"
+          tabindex="{% if budget_deploy_mode %}-1{% else %}0{% endif %}"
+          role="button"
+          aria-label="Перетащите архив или папку"
+          aria-disabled="{% if budget_deploy_mode %}true{% else %}false{% endif %}"
+        >
           <div class="dropzone-icon">+</div>
           <div class="dropzone-copy">
-            <strong>Перетащите архив или папку сюда</strong>
-            <p>Если это архив, система отправит его как архив. Если это папка или набор файлов, система сама соберёт структуру и загрузит как папку.</p>
+            {% if budget_deploy_mode %}
+              <strong>Загрузка отключена в режиме деплоя</strong>
+              <p>Сейчас доступен только уже подключённый источник данных. Импорт архивов и папок закрыт, чтобы интерфейс оставался стабильным для пользователей.</p>
+            {% else %}
+              <strong>Перетащите архив или папку сюда</strong>
+              <p>Если это архив, система отправит его как архив. Если это папка или набор файлов, система сама соберёт структуру и загрузит как папку.</p>
+            {% endif %}
           </div>
           <div class="dropzone-actions">
-            <button id="choose-archive-btn" class="button ghost" type="button">Выбрать архив</button>
-            <button id="choose-folder-btn" class="button ghost" type="button">Выбрать папку</button>
+            <button id="choose-archive-btn" class="button ghost" type="button" {% if budget_deploy_mode %}disabled aria-disabled="true"{% endif %}>Выбрать архив</button>
+            <button id="choose-folder-btn" class="button ghost" type="button" {% if budget_deploy_mode %}disabled aria-disabled="true"{% endif %}>Выбрать папку</button>
           </div>
+          {% if budget_deploy_mode %}
+            <div class="dropzone-lock-note">
+              <span class="dropzone-lock-pill">Режим витрины</span>
+              <span>Загрузка новых файлов недоступна</span>
+            </div>
+          {% endif %}
           <input id="archive-input" type="file" accept=".zip,.rar,.7z" hidden>
           <input id="folder-input" type="file" webkitdirectory directory multiple hidden>
         </div>
@@ -268,6 +286,7 @@
 
   <script>
     window.BUDGET_API_BASE_URL = "{{ budget_api_base_url|escapejs }}";
+    window.BUDGET_DEPLOY_MODE = {% if budget_deploy_mode %}true{% else %}false{% endif %};
   </script>
   <script src="{% static 'web/app.js' %}" defer></script>
 </body>

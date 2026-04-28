@@ -27,6 +27,11 @@ from ..services.import_jobs import get_import_job_runner
 router = APIRouter(prefix="/api/v1/imports", tags=["imports"])
 
 
+def _ensure_uploads_enabled() -> None:
+    if get_settings().deploy_mode:
+        raise HTTPException(status_code=403, detail="Dataset uploads are disabled in deploy mode.")
+
+
 @router.post("/default", response_model=ImportBatchResponse, status_code=status.HTTP_202_ACCEPTED)
 def import_default_dataset(db: Session = Depends(get_db)) -> ImportBatchResponse:
     settings = get_settings()
@@ -62,6 +67,7 @@ async def upload_archive(
     file: Annotated[UploadFile, File(description="ZIP, RAR or 7Z archive with project folders")],
     db: Session = Depends(get_db),
 ) -> ImportBatchResponse:
+    _ensure_uploads_enabled()
     if not file.filename or not is_supported_archive(file.filename):
         raise HTTPException(status_code=400, detail="Upload .zip, .rar or .7z archive.")
 
@@ -87,6 +93,7 @@ async def upload_files(
     relative_paths: Annotated[list[str] | None, Form(description="Relative paths matching uploaded files")] = None,
     db: Session = Depends(get_db),
 ) -> ImportBatchResponse:
+    _ensure_uploads_enabled()
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
 
@@ -111,6 +118,7 @@ async def upload_files(
 
 @router.post("/local-path", response_model=ImportBatchResponse, status_code=status.HTTP_202_ACCEPTED)
 def import_local_path(payload: LocalImportRequest, db: Session = Depends(get_db)) -> ImportBatchResponse:
+    _ensure_uploads_enabled()
     settings = get_settings()
     if not settings.allow_local_import:
         raise HTTPException(status_code=403, detail="Local path import is disabled.")

@@ -80,6 +80,7 @@ class Settings:
     project_root: Path
     storage_dir: Path
     database_url: str
+    deploy_mode: bool
     allow_local_import: bool
     cors_allowed_origins: tuple[str, ...]
     llm_model: str | None
@@ -159,6 +160,7 @@ def get_settings() -> Settings:
         project_root=project_root,
         storage_dir=storage_dir,
         database_url=_sync_database_url(),
+        deploy_mode=_as_bool(os.getenv("DEPLOY_MODE", _yaml_value(yaml_config, "deploy")), default=False),
         allow_local_import=os.getenv("ALLOW_LOCAL_IMPORT", "true").lower() in {"1", "true", "yes", "on"},
         cors_allowed_origins=tuple(cors_allow_origins),
         llm_model=llm_model,

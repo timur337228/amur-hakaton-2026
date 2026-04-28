@@ -11,5 +11,6 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         "web/index.html",
         {
             "budget_api_base_url": settings.BUDGET_API_BASE_URL,
+            "budget_deploy_mode": settings.BUDGET_DEPLOY_MODE,
         },
     )

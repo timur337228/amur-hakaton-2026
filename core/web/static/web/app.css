@@ -227,6 +227,35 @@ summary {
   background: var(--primary-soft);
 }
 
+.dropzone.is-disabled {
+  border-style: solid;
+  border-color: var(--border);
+  background: #f5f9ff;
+  cursor: not-allowed;
+  position: relative;
+  overflow: hidden;
+}
+
+.dropzone.is-disabled::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(
+      -35deg,
+      rgba(36, 99, 235, 0.04),
+      rgba(36, 99, 235, 0.04) 14px,
+      rgba(255, 255, 255, 0.45) 14px,
+      rgba(255, 255, 255, 0.45) 28px
+    );
+  pointer-events: none;
+}
+
+.dropzone.is-disabled:hover {
+  border-color: var(--border);
+  background: #f5f9ff;
+}
+
 .dropzone-icon {
   width: 44px;
   height: 44px;
@@ -244,6 +273,37 @@ summary {
 .dropzone-copy strong {
   display: block;
   font-size: 18px;
+}
+
+.dropzone-lock-note {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.dropzone-lock-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .dropzone-actions,

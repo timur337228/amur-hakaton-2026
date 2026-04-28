@@ -34,6 +34,7 @@ class SiteTests(unittest.TestCase):
         html = response.content.decode("utf-8")
         self.assertIn("Budget Analytics", html)
         self.assertIn(settings.BUDGET_API_BASE_URL, html)
+        self.assertIn("window.BUDGET_DEPLOY_MODE", html)
 
     def test_index_html_contains_main_flow_controls(self) -> None:
         template_path = Path(settings.TEMPLATES[0]["DIRS"][0]) / "web" / "index.html"
@@ -43,6 +44,8 @@ class SiteTests(unittest.TestCase):
         self.assertIn('id="choose-folder-btn"', html)
         self.assertIn('id="record-audio-btn"', html)
         self.assertIn('id="record-audio-label"', html)
+        self.assertIn("Загрузка отключена в режиме деплоя", html)
+        self.assertIn("Режим витрины", html)
         self.assertIn("Примеры запросов", html)
         self.assertIn('class="chip prompt-chip"', html)
         self.assertIn('id="run-query-btn"', html)
