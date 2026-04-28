@@ -3,11 +3,13 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .db import init_db
 from .routers.analytics import router as analytics_router
 from .routers.imports import router as imports_router
+from .routers.site import router as site_router, site_root
 
 
 @asynccontextmanager
@@ -31,5 +33,7 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+app.mount("/static", StaticFiles(directory=site_root()), name="static")
+app.include_router(site_router)
 app.include_router(imports_router)
 app.include_router(analytics_router)
