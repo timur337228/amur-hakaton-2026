@@ -86,6 +86,13 @@ class AnalyticsQueryRequest(BaseModel):
     include_charts: bool = True
 
 
+class AnalyticsExportRequest(AnalyticsQueryRequest):
+    limit: int = Field(default=50000, ge=1, le=50000)
+    offset: int = Field(default=0, ge=0)
+    include_rows: bool = True
+    include_charts: bool = True
+
+
 class AnalyticsRow(BaseModel):
     dimensions: dict[str, str | int | None]
     metric: str

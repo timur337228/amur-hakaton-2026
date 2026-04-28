@@ -4,7 +4,11 @@ import os
 import unittest
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZipFile
+
+from fastapi import HTTPException
 
 TEST_DB_PATH = Path.cwd() / ".test_tmp" / "analytics_test.sqlite"
 TEST_DB_PATH.parent.mkdir(exist_ok=True)
@@ -13,8 +17,10 @@ os.environ["STORAGE_DIR"] = "storage_test"
 
 from core.api.app.db import Base, SessionLocal, engine  # noqa: E402
 from core.api.app.models import BudgetFact, ImportBatch  # noqa: E402
-from core.api.app.schemas import AnalyticsFilters, AnalyticsQueryRequest  # noqa: E402
+from core.api.app.routers.analytics import export_analytics_xlsx  # noqa: E402
+from core.api.app.schemas import AnalyticsExportRequest, AnalyticsFilters, AnalyticsQueryRequest  # noqa: E402
 from core.api.app.services.analytics import distinct_field_values, run_analytics_query  # noqa: E402
+from core.api.app.services.xlsx_export import XLSX_MEDIA_TYPE, build_analytics_xlsx  # noqa: E402
 
 
 class AnalyticsTests(unittest.TestCase):
@@ -112,6 +118,65 @@ class AnalyticsTests(unittest.TestCase):
             values = distinct_field_values(db, batch_id="batch-1", field="object_name", query="Благо", limit=10)
 
         self.assertEqual(values, ["Бюджет города Благовещенска"])
+
+    def test_build_xlsx_export_contains_sheets_and_data(self) -> None:
+        request = AnalyticsQueryRequest(
+            batch_id="batch-1",
+            metrics=["limits", "cash_payments"],
+            filters=AnalyticsFilters(),
+            group_by=["month"],
+        )
+
+        with SessionLocal() as db:
+            response = run_analytics_query(db, request)
+
+        workbook = build_analytics_xlsx(response)
+
+        self.assertTrue(workbook.startswith(b"PK"))
+        with ZipFile(BytesIO(workbook)) as archive:
+            names = set(archive.namelist())
+            workbook_xml = archive.read("xl/workbook.xml").decode("utf-8")
+            data_sheet = archive.read("xl/worksheets/sheet2.xml").decode("utf-8")
+
+        self.assertIn("[Content_Types].xml", names)
+        self.assertIn('name="Summary"', workbook_xml)
+        self.assertIn('name="Data"', workbook_xml)
+        self.assertIn('name="ChartsData"', workbook_xml)
+        self.assertIn("limits", data_sheet)
+        self.assertIn("cash_payments", data_sheet)
+
+    def test_xlsx_export_endpoint_returns_attachment(self) -> None:
+        payload = AnalyticsExportRequest(
+            batch_id="batch-1",
+            metrics=["limits", "cash_payments"],
+            filters=AnalyticsFilters(),
+            group_by=["month"],
+        )
+
+        with SessionLocal() as db:
+            response = export_analytics_xlsx(payload, db)
+
+        self.assertEqual(response.media_type, XLSX_MEDIA_TYPE)
+        self.assertIn("attachment;", response.headers["content-disposition"])
+        self.assertIn(".xlsx", response.headers["content-disposition"])
+        self.assertTrue(response.body.startswith(b"PK"))
+
+        with ZipFile(BytesIO(response.body)) as archive:
+            workbook_xml = archive.read("xl/workbook.xml").decode("utf-8")
+
+        self.assertIn('name="Summary"', workbook_xml)
+        self.assertIn('name="Data"', workbook_xml)
+        self.assertIn('name="ChartsData"', workbook_xml)
+
+    def test_xlsx_export_endpoint_rejects_unsupported_metric(self) -> None:
+        payload = AnalyticsExportRequest(batch_id="batch-1", metrics=["unknown_metric"])
+
+        with SessionLocal() as db:
+            with self.assertRaises(HTTPException) as error:
+                export_analytics_xlsx(payload, db)
+
+        self.assertEqual(error.exception.status_code, 400)
+        self.assertIn("Unsupported metric", error.exception.detail)
 
 
 def _fact(

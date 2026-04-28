@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..schemas import (
+    AnalyticsExportRequest,
     AnalyticsOptionsResponse,
     AnalyticsQueryRequest,
     AnalyticsQueryResponse,
@@ -16,6 +21,7 @@ from ..services.analytics import (
     distinct_field_values,
     run_analytics_query,
 )
+from ..services.xlsx_export import XLSX_MEDIA_TYPE, build_analytics_xlsx
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
 
@@ -26,6 +32,24 @@ def query_analytics(payload: AnalyticsQueryRequest, db: Session = Depends(get_db
         return run_analytics_query(db, payload)
     except AnalyticsValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/export/xlsx")
+def export_analytics_xlsx(payload: AnalyticsExportRequest, db: Session = Depends(get_db)) -> Response:
+    try:
+        query_payload = payload.model_copy(update={"include_rows": True, "include_charts": True})
+        result = run_analytics_query(db, query_payload)
+    except AnalyticsValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    content = build_analytics_xlsx(result)
+    filename = _export_filename(payload.batch_id)
+    disposition = f"attachment; filename={filename}; filename*=UTF-8''{quote(filename)}"
+    return Response(
+        content=content,
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": disposition},
+    )
 
 
 @router.get("/options", response_model=AnalyticsOptionsResponse)
@@ -47,3 +71,9 @@ def get_distinct_values(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return AnalyticsValuesResponse(field=field, values=values)
+
+
+def _export_filename(batch_id: str) -> str:
+    safe_batch_id = "".join(char for char in batch_id if char.isalnum() or char in "-_")[:36] or "batch"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"analytics_{safe_batch_id}_{timestamp}.xlsx"
