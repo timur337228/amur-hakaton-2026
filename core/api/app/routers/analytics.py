@@ -88,9 +88,9 @@ async def transcribe_audio(
             temp_path = Path(temporary_file.name)
         result = transcribe_audio_file(temp_path, filter_options=filter_options)
     except SpeechToTextConfigurationError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Аудио выдало ошибку, попробуйте снова.") from exc
     except SpeechToTextServiceError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail="Аудио выдало ошибку, попробуйте снова.") from exc
     finally:
         await file.close()
         if "temp_path" in locals():

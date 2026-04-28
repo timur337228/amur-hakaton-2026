@@ -460,6 +460,9 @@ async function transcribeAudioFile(file, sourceButton, loadingLabel) {
     if (response.warning) {
       showToast(response.warning);
     }
+  } catch (_error) {
+    setAudioStatus("Аудио выдало ошибку, попробуйте снова.", "danger");
+    showToast("Аудио выдало ошибку, попробуйте снова.");
   } finally {
     setButtonLoading(sourceButton, false);
     syncAudioRecordingButtons();
