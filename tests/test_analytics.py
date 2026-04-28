@@ -18,7 +18,7 @@ os.environ["STORAGE_DIR"] = "storage_test"
 
 from core.api.app.db import Base, SessionLocal, engine  # noqa: E402
 from core.api.app.models import BudgetFact, ImportBatch  # noqa: E402
-from core.api.app.routers.analytics import export_analytics_xlsx, get_filter_options, query_analytics  # noqa: E402
+from core.api.app.routers.analytics import export_analytics_xlsx, get_filter_options, query_analytics, resolve_text  # noqa: E402
 from core.api.app.routers.imports import get_import_preview, get_import_stats  # noqa: E402
 from core.api.app.schemas import (  # noqa: E402
     AnalyticsExportRequest,
@@ -253,6 +253,43 @@ class AnalyticsTests(unittest.TestCase):
         self.assertFalse(response.meta.llm_applied)
         self.assertIsNone(response.meta.text_query)
         self.assertEqual(response.summary["contract_amount"], Decimal("500.00"))
+
+    def test_resolve_text_endpoint_returns_llm_interpretation(self) -> None:
+        payload = AnalyticsQueryRequest(batch_id="batch-1", text_query="Покажи лимиты по Благовещенску")
+        llm_patch = AnalyticsLLMInterpretation(
+            metrics=["limits"],
+            filters=AnalyticsFilters(object_query="Благовещенск"),
+            group_by=["month"],
+        )
+
+        with patch(
+            "core.api.app.services.analytics.resolve_text_query_to_request_patch",
+            return_value=llm_patch,
+        ):
+            with SessionLocal() as db:
+                response = resolve_text(payload, db)
+
+        self.assertTrue(response.llm_applied)
+        self.assertEqual(response.text_query, "Покажи лимиты по Благовещенску")
+        self.assertEqual(response.llm_interpretation.metrics, ["limits"])
+        self.assertEqual(response.llm_interpretation.filters.object_query, "Благовещенск")
+        self.assertEqual(response.resolved_request["metrics"], ["limits"])
+        self.assertEqual(response.resolved_request["group_by"], ["month"])
+
+    def test_resolve_text_endpoint_without_text_returns_plain_request(self) -> None:
+        payload = AnalyticsQueryRequest(
+            batch_id="batch-1",
+            metrics=["contract_amount"],
+            filters=AnalyticsFilters(source_groups=["gz"]),
+        )
+
+        with SessionLocal() as db:
+            response = resolve_text(payload, db)
+
+        self.assertFalse(response.llm_applied)
+        self.assertIsNone(response.llm_interpretation)
+        self.assertEqual(response.resolved_request["metrics"], ["contract_amount"])
+        self.assertEqual(response.resolved_request["filters"]["source_groups"], ["gz"])
 
     def test_query_endpoint_returns_500_when_llm_is_not_configured(self) -> None:
         payload = AnalyticsQueryRequest(batch_id="batch-1", text_query="Покажи что-нибудь")

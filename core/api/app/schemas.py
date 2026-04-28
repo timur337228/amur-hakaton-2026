@@ -222,3 +222,11 @@ class AnalyticsLLMInterpretation(BaseModel):
     metrics: list[str] | None = None
     filters: AnalyticsFilters = Field(default_factory=AnalyticsFilters)
     group_by: list[str] | None = None
+
+
+class AnalyticsResolveTextResponse(BaseModel):
+    batch_id: str
+    text_query: str | None = None
+    llm_applied: bool
+    llm_interpretation: AnalyticsLLMInterpretation | None = None
+    resolved_request: dict

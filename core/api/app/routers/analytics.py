@@ -15,6 +15,7 @@ from ..schemas import (
     AnalyticsOptionsResponse,
     AnalyticsQueryRequest,
     AnalyticsQueryResponse,
+    AnalyticsResolveTextResponse,
     AnalyticsValuesResponse,
 )
 from ..services.analytics import (
@@ -22,6 +23,7 @@ from ..services.analytics import (
     analytics_filter_options,
     analytics_options,
     distinct_field_values,
+    resolve_analytics_text,
     run_analytics_request,
     run_analytics_query,
 )
@@ -35,6 +37,18 @@ router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
 def query_analytics(payload: AnalyticsQueryRequest, db: Session = Depends(get_db)) -> AnalyticsQueryResponse:
     try:
         return run_analytics_request(db, payload)
+    except AnalyticsValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LLMConfigurationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except LLMServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/resolve-text", response_model=AnalyticsResolveTextResponse)
+def resolve_text(payload: AnalyticsQueryRequest, db: Session = Depends(get_db)) -> AnalyticsResolveTextResponse:
+    try:
+        return resolve_analytics_text(db, payload)
     except AnalyticsValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LLMConfigurationError as exc:

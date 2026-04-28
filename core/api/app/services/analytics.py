@@ -14,6 +14,7 @@ from ..schemas import (
     AnalyticsMeta,
     AnalyticsQueryRequest,
     AnalyticsQueryResponse,
+    AnalyticsResolveTextResponse,
     AnalyticsRow,
     AnalyticsTimeseriesPoint,
 )
@@ -149,7 +150,7 @@ def run_analytics_query(db: Session, request: AnalyticsQueryRequest) -> Analytic
 
 
 def run_analytics_request(db: Session, request: AnalyticsQueryRequest) -> AnalyticsQueryResponse:
-    resolved_request, llm_applied = resolve_analytics_request(db, request)
+    resolved_request, llm_patch, llm_applied = resolve_analytics_request_details(db, request)
     response = run_analytics_query(db, resolved_request)
     response.meta.llm_applied = llm_applied
     response.meta.text_query = request.text_query
@@ -158,6 +159,25 @@ def run_analytics_request(db: Session, request: AnalyticsQueryRequest) -> Analyt
 
 
 def resolve_analytics_request(db: Session, request: AnalyticsQueryRequest) -> tuple[AnalyticsQueryRequest, bool]:
+    resolved_request, _, llm_applied = resolve_analytics_request_details(db, request)
+    return resolved_request, llm_applied
+
+
+def resolve_analytics_text(db: Session, request: AnalyticsQueryRequest) -> AnalyticsResolveTextResponse:
+    resolved_request, llm_patch, llm_applied = resolve_analytics_request_details(db, request)
+    return AnalyticsResolveTextResponse(
+        batch_id=request.batch_id,
+        text_query=request.text_query,
+        llm_applied=llm_applied,
+        llm_interpretation=llm_patch,
+        resolved_request=_serialize_resolved_request(resolved_request),
+    )
+
+
+def resolve_analytics_request_details(
+    db: Session,
+    request: AnalyticsQueryRequest,
+) -> tuple[AnalyticsQueryRequest, AnalyticsLLMInterpretation | None, bool]:
     llm_patch = None
     if request.text_query:
         filter_options = analytics_filter_options(db, batch_id=request.batch_id, limit=50)
@@ -167,7 +187,7 @@ def resolve_analytics_request(db: Session, request: AnalyticsQueryRequest) -> tu
         )
 
     resolved_request = _merge_request_with_patch(request, llm_patch)
-    return resolved_request, llm_patch is not None
+    return resolved_request, llm_patch, llm_patch is not None
 
 
 def distinct_field_values(
