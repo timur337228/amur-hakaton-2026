@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from .config import get_settings
 from .db import init_db
+from .routers.analytics import router as analytics_router
 from .routers.imports import router as imports_router
 
 
@@ -31,3 +32,4 @@ def health() -> dict[str, str]:
 
 
 app.include_router(imports_router)
+app.include_router(analytics_router)

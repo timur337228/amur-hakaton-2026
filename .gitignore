@@ -69,6 +69,7 @@ exports/
 reports/
 generated_reports/
 storage/
+storage_test/
 .test_tmp/
 tmp/
 temp/
