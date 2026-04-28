@@ -26,6 +26,27 @@
 
 Для обучения через `TRL SFTTrainer` удобнее всего использовать формат `prompt` + `completion`.
 
+## Важно для HuggingFace Datasets
+
+Если загружать `.jsonl` напрямую через `load_dataset("json", ...)`, можно поймать ошибку вида:
+
+`TypeError: Couldn't cast array of type string to null`
+
+Причина в том, что часть полей в `target` опциональна. Например:
+
+- в `train` поле `target.filters.document_id` может быть только `null`
+- а в `validation` там уже встречается строка
+
+Без явной схемы `datasets` иногда выводит для такого поля тип `null`, а потом не может привести строку к `null`.
+
+Используй готовый загрузчик с зафиксированными `features`:
+
+```python
+from training.llm_sft.dataset_loader import load_budget_query_sft_dataset
+
+dataset = load_budget_query_sft_dataset(cache_dir="/tmp/hf-datasets-cache")
+```
+
 ## Сценарии
 
 Датасет покрывает:

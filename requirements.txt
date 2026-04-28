@@ -6,6 +6,8 @@ sqlalchemy>=2.0.40
 alembic>=1.16.0
 psycopg[binary]>=3.2.0
 pydantic>=2.12.0
+faster-whisper>=1.1.1
+requests>=2.32.0
 
 # Optional archive support for environments without 7-Zip installed.
 py7zr>=1.0.0

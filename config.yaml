@@ -1,8 +1,24 @@
 llm:
   model: deepseek-v4-flash
 
-# choice local or cloud
-whisper: 
+whisper:
+  # provider: api | local
+  provider: api
+  # backward-compatible switch if provider is omitted
   local: false
-  # whisper-v3-turbo, whisper-v3
+  # common shortcut for the selected provider
   model_name: whisper-v3-turbo
+  # 302.ai Whisper API model
+  api_model: whisper-v3-turbo
+  # local faster-whisper model
+  local_model: large-v3-turbo
+  language: ru
+  temperature: 0
+  response_format: verbose_json
+  timestamp_granularity: word
+  diarize: false
+  timeout_seconds: 120
+  device: auto
+  compute_type: int8
+  vad_filter: true
+  postprocess_with_llm: false

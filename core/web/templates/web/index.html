@@ -18,7 +18,7 @@
         <div class="brand-copy">
           <span class="eyebrow">Бюджетная аналитика</span>
           <h1>Простой интерфейс для поиска и сравнения показателей</h1>
-          <p>Система сама подхватывает <code>project_file</code>, если он есть, или принимает архив и папку через перетаскивание.</p>
+          <p>Система сама подхватывает данные, если они уже подключены, или принимает архив и папку через перетаскивание.</p>
         </div>
       </div>
     </header>
@@ -46,8 +46,6 @@
           <input id="archive-input" type="file" accept=".zip,.rar,.7z" hidden>
           <input id="folder-input" type="file" webkitdirectory directory multiple hidden>
         </div>
-
-        <p class="helper-text">Локальная папка <code>project_file</code> подключается автоматически при открытии страницы. Отдельное поле для локального пути скрыто, чтобы не перегружать интерфейс.</p>
       </section>
 
       <section class="card">
@@ -58,9 +56,8 @@
           </div>
           <span id="batch-status" class="badge muted">не загружен</span>
         </div>
-
         <div id="dataset-summary" class="stats-grid"></div>
-        <p id="batch-meta" class="meta-note">После импорта здесь появятся размер набора, даты и служебный идентификатор.</p>
+        <p id="batch-meta" class="meta-note" hidden></p>
       </section>
     </section>
 
@@ -72,15 +69,31 @@
         </div>
       </div>
 
+      <div class="field">
+        <span>Примеры запросов</span>
+        <div class="prompt-row">
+          <button class="chip prompt-chip" data-prompt="Покажи лимиты по Благовещенску по месяцам">Лимиты по Благовещенску</button>
+          <button class="chip prompt-chip" data-prompt="Покажи кассовые выплаты по 0502">Кассовые выплаты по 0502</button>
+          <button class="chip prompt-chip" data-prompt="Покажи сумму контрактов по источнику gz">Контракты по gz</button>
+        </div>
+      </div>
+
       <label class="search-field">
         <span>Главный запрос</span>
         <textarea id="text-query-input" rows="3" placeholder="Например: Покажи лимиты по Благовещенску по месяцам"></textarea>
       </label>
 
-      <div class="prompt-row">
-        <button class="chip prompt-chip" data-prompt="Покажи лимиты по Благовещенску по месяцам">Лимиты по Благовещенску</button>
-        <button class="chip prompt-chip" data-prompt="Покажи кассовые выплаты по 0502">Кассовые выплаты по 0502</button>
-        <button class="chip prompt-chip" data-prompt="Покажи сумму контрактов по источнику gz">Контракты по gz</button>
+      <div class="voice-tools">
+        <div class="voice-tools-copy">
+          <strong>Можно надиктовать запрос голосом</strong>
+          <p id="audio-status" class="voice-status muted" hidden></p>
+        </div>
+        <div class="voice-tools-actions">
+          <button id="record-audio-btn" class="button primary voice-button" type="button">
+            <span class="voice-button-icon" aria-hidden="true">●</span>
+            <span id="record-audio-label">Удерживай и говори</span>
+          </button>
+        </div>
       </div>
 
       <div class="filter-grid">

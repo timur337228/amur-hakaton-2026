@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from http.client import RemoteDisconnected
 from socket import timeout as SocketTimeout
 from urllib.error import HTTPError, URLError
@@ -17,6 +18,13 @@ class LLMConfigurationError(RuntimeError):
 
 class LLMServiceError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class TranscriptNormalizationResult:
+    normalized_text: str
+    changed: bool
+    reasoning: str | None = None
 
 
 SYSTEM_PROMPT = (
@@ -40,6 +48,15 @@ SYSTEM_PROMPT = (
     "If the user does not explicitly mention dates, return date_from and date_to as null. "
     "Do not expand an unspecified request into all available metrics. "
     "If a field is not mentioned, omit it or set it to null."
+)
+
+TRANSCRIPT_NORMALIZATION_SYSTEM_PROMPT = (
+    "You correct Russian speech-to-text output for a budget analytics assistant. "
+    "Preserve the user's meaning. Fix only obvious ASR mistakes using dataset context such as object names, "
+    "organization names, budget names, codes and funding sources. "
+    "If the text is already clear, keep it unchanged. "
+    "Do not invent new filters or metrics. Return only valid JSON with keys: "
+    "normalized_text, changed, reasoning."
 )
 
 METRIC_HINTS = {
@@ -92,12 +109,83 @@ def resolve_text_query_to_request_patch(
         "text_query": text_query,
         "dataset_options": filter_options.model_dump(mode="json"),
     }
+    json_text = _request_llm_json_text(system_prompt=SYSTEM_PROMPT, user_payload=user_payload)
+    try:
+        parsed = json.loads(json_text)
+    except json.JSONDecodeError as exc:
+        raise LLMServiceError("LLM response was not valid JSON.") from exc
+
+    normalized = _normalize_llm_payload(parsed, text_query=text_query, filter_options=filter_options)
+    return AnalyticsLLMInterpretation.model_validate(normalized)
+
+
+def normalize_transcribed_query_text(
+    *,
+    raw_text: str,
+    filter_options: AnalyticsFilterOptionsResponse | None = None,
+) -> TranscriptNormalizationResult:
+    settings = get_settings()
+    if not settings.llm_api_key:
+        raise LLMConfigurationError("LLM API key is not configured in .env.")
+    if not settings.llm_model:
+        raise LLMConfigurationError("LLM model is not configured in config.yaml.")
+
+    user_payload = {
+        "raw_text": raw_text,
+        "dataset_options": filter_options.model_dump(mode="json") if filter_options is not None else None,
+        "instruction": (
+            "Fix only obvious recognition errors. "
+            "If the transcript is already clear, return it unchanged."
+        ),
+    }
+    json_text = _request_llm_json_text(
+        system_prompt=TRANSCRIPT_NORMALIZATION_SYSTEM_PROMPT,
+        user_payload=user_payload,
+    )
+    try:
+        parsed = json.loads(json_text)
+    except json.JSONDecodeError as exc:
+        raise LLMServiceError("Transcript normalization response was not valid JSON.") from exc
+
+    normalized_text = _normalize_scalar(parsed.get("normalized_text"))
+    changed = _normalize_change_flag(parsed.get("changed"), raw_text=raw_text, normalized_text=normalized_text)
+    reasoning = _normalize_scalar(parsed.get("reasoning"))
+
+    if not normalized_text and not changed:
+        normalized_text = raw_text.strip()
+    if not normalized_text:
+        raise LLMServiceError("Transcript normalization did not return normalized_text.")
+    if not changed:
+        normalized_text = raw_text.strip()
+
+    return TranscriptNormalizationResult(
+        normalized_text=normalized_text,
+        changed=changed and normalized_text != raw_text.strip(),
+        reasoning=reasoning,
+    )
+
+
+def _extract_json_text(content: str) -> str:
+    cleaned = content.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if len(lines) >= 3:
+            cleaned = "\n".join(lines[1:-1]).strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise LLMServiceError("LLM response did not include a JSON object.")
+    return cleaned[start : end + 1]
+
+
+def _request_llm_json_text(*, system_prompt: str, user_payload: dict) -> str:
+    settings = get_settings()
     body = {
         "model": settings.llm_model,
         "temperature": 0.1,
         "response_format": {"type": "json_object"},
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ],
     }
@@ -127,27 +215,7 @@ def resolve_text_query_to_request_patch(
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMServiceError("LLM response did not contain message content.") from exc
 
-    json_text = _extract_json_text(content)
-    try:
-        parsed = json.loads(json_text)
-    except json.JSONDecodeError as exc:
-        raise LLMServiceError("LLM response was not valid JSON.") from exc
-
-    normalized = _normalize_llm_payload(parsed, text_query=text_query, filter_options=filter_options)
-    return AnalyticsLLMInterpretation.model_validate(normalized)
-
-
-def _extract_json_text(content: str) -> str:
-    cleaned = content.strip()
-    if cleaned.startswith("```"):
-        lines = cleaned.splitlines()
-        if len(lines) >= 3:
-            cleaned = "\n".join(lines[1:-1]).strip()
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        raise LLMServiceError("LLM response did not include a JSON object.")
-    return cleaned[start : end + 1]
+    return _extract_json_text(content)
 
 
 def _normalize_llm_payload(
@@ -229,6 +297,18 @@ def _normalize_scalar(raw_value: object) -> str | None:
         return None
     text = str(raw_value).strip()
     return text or None
+
+
+def _normalize_change_flag(raw_value: object, *, raw_text: str, normalized_text: str | None) -> bool:
+    if isinstance(raw_value, bool):
+        return raw_value
+    if raw_value is not None:
+        normalized = str(raw_value).strip().lower()
+        if normalized in {"1", "true", "yes", "changed"}:
+            return True
+        if normalized in {"0", "false", "no", "unchanged"}:
+            return False
+    return bool(normalized_text) and normalized_text.strip() != raw_text.strip()
 
 
 def _apply_text_heuristics(normalized: dict, *, text_query: str, filter_options: AnalyticsFilterOptionsResponse) -> None:

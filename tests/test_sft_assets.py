@@ -4,12 +4,15 @@ import json
 import unittest
 from pathlib import Path
 
+from training.llm_sft.dataset_loader import BUDGET_QUERY_FEATURES, load_budget_query_sft_dataset
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TRAIN_FILE = REPO_ROOT / "training" / "llm_sft" / "budget_query_sft_train.jsonl"
 VAL_FILE = REPO_ROOT / "training" / "llm_sft" / "budget_query_sft_val.jsonl"
 MANIFEST_FILE = REPO_ROOT / "training" / "llm_sft" / "dataset_manifest.json"
 NOTEBOOK_FILE = REPO_ROOT / "notebooks" / "yandexgpt5_lite_budget_query_sft.ipynb"
+CACHE_DIR = Path("/tmp/amur-hf-datasets-cache")
 
 EXPECTED_ROOT_KEYS = {"date_from", "date_to", "metrics", "filters", "group_by"}
 EXPECTED_FILTER_KEYS = {
@@ -66,6 +69,15 @@ class SFTAssetsTests(unittest.TestCase):
         self.assertIn("HF_TOKEN", all_source)
         self.assertIn("yandex/YandexGPT-5-Lite-8B-pretrain", all_source)
         self.assertIn("SFTTrainer", all_source)
+
+    def test_dataset_loader_loads_both_splits_with_explicit_features(self) -> None:
+        dataset = load_budget_query_sft_dataset(cache_dir=CACHE_DIR)
+        self.assertEqual(dataset["train"].num_rows, 426)
+        self.assertEqual(dataset["validation"].num_rows, 80)
+        self.assertEqual(dataset["train"].features, BUDGET_QUERY_FEATURES)
+        first_target = dataset["train"][0]["target"]
+        self.assertIn("filters", first_target)
+        self.assertEqual(set(first_target["filters"].keys()), EXPECTED_FILTER_KEYS)
 
     @staticmethod
     def _read_jsonl(path: Path) -> list[dict]:

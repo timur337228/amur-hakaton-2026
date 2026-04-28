@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import unittest
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from zipfile import ZipFile
 
@@ -20,9 +22,12 @@ from core.api.app import db as db_module  # noqa: E402
 from core.api.app.db import Base, SessionLocal  # noqa: E402
 from core.api.app.models import BudgetFact, ImportBatch  # noqa: E402
 from core.api.app.routers.analytics import export_analytics_xlsx, get_filter_options, query_analytics, resolve_text  # noqa: E402
+from core.api.app.routers.analytics import transcribe_audio  # noqa: E402
 from core.api.app.routers.imports import get_import_preview, get_import_stats  # noqa: E402
 from core.api.app.schemas import (  # noqa: E402
+    AudioTranscriptWord,
     AnalyticsExportRequest,
+    AnalyticsFilterOptionsResponse,
     AnalyticsFilters,
     AnalyticsLLMInterpretation,
     AnalyticsQueryRequest,
@@ -376,6 +381,74 @@ class AnalyticsTests(unittest.TestCase):
         self.assertIn("LLM временно недоступен", response.warning or "")
         self.assertEqual(response.resolved_request["metrics"], ["limits"])
 
+    def test_transcribe_audio_endpoint_returns_normalized_text(self) -> None:
+        upload = _AsyncUploadStub(filename="query.webm", content=b"fake-audio")
+        fake_result = SimpleNamespace(
+            provider="api",
+            model="whisper-v3-turbo",
+            raw_text="покажи лимиты по благовещ",
+            normalized_text="Покажи лимиты по Благовещенску",
+            correction_applied=True,
+            language="ru",
+            duration_seconds=2.4,
+            words=[AudioTranscriptWord(word="Благовещенску", start=1.1, end=1.8)],
+            warning=None,
+        )
+        filter_options = AnalyticsFilterOptionsResponse(
+            batch_id="batch-1",
+            date_min=date(2025, 1, 1),
+            date_max=date(2025, 1, 31),
+            limit_per_field=80,
+            metrics=["limits"],
+            source_groups=["rchb"],
+            organizations=["Администрация"],
+            objects=["Благовещенск"],
+            budgets=["Благовещенск"],
+            kfsr_codes=["0502"],
+            kcsr_codes=[],
+            kvr_codes=[],
+            kvsr_codes=[],
+            kesr_codes=[],
+            kosgu_codes=[],
+            purpose_codes=[],
+            funding_sources=[],
+            document_numbers=[],
+            document_ids=[],
+        )
+        fake_db = SimpleNamespace(get=lambda model, batch_id: object())
+
+        with patch("core.api.app.routers.analytics.analytics_filter_options", return_value=filter_options):
+            with patch("core.api.app.routers.analytics.transcribe_audio_file", return_value=fake_result) as mocked_stt:
+                response = asyncio.run(transcribe_audio(upload, batch_id="batch-1", db=fake_db))
+
+        self.assertEqual(response.provider, "api")
+        self.assertEqual(response.model, "whisper-v3-turbo")
+        self.assertEqual(response.raw_text, "покажи лимиты по благовещ")
+        self.assertEqual(response.normalized_text, "Покажи лимиты по Благовещенску")
+        self.assertTrue(response.correction_applied)
+        self.assertEqual(response.words[0].word, "Благовещенску")
+        self.assertEqual(mocked_stt.call_args.kwargs["filter_options"].batch_id, "batch-1")
+        self.assertTrue(upload.closed)
+
+    def test_transcribe_audio_endpoint_returns_404_for_missing_batch(self) -> None:
+        upload = _AsyncUploadStub(filename="query.webm", content=b"fake-audio")
+        fake_db = SimpleNamespace(get=lambda model, batch_id: None)
+
+        with self.assertRaises(HTTPException) as error:
+            asyncio.run(transcribe_audio(upload, batch_id="missing-batch", db=fake_db))
+
+        self.assertEqual(error.exception.status_code, 404)
+
+    def test_transcribe_audio_endpoint_rejects_unsupported_extension(self) -> None:
+        upload = _AsyncUploadStub(filename="query.ogg", content=b"fake-audio")
+        fake_db = SimpleNamespace(get=lambda model, batch_id: object())
+
+        with self.assertRaises(HTTPException) as error:
+            asyncio.run(transcribe_audio(upload, batch_id=None, db=fake_db))
+
+        self.assertEqual(error.exception.status_code, 400)
+        self.assertIn("Unsupported audio format", str(error.exception.detail))
+
 
     def test_build_xlsx_export_contains_sheets_and_data(self) -> None:
         request = AnalyticsQueryRequest(
@@ -397,11 +470,13 @@ class AnalyticsTests(unittest.TestCase):
             data_sheet = archive.read("xl/worksheets/sheet2.xml").decode("utf-8")
 
         self.assertIn("[Content_Types].xml", names)
-        self.assertIn('name="Summary"', workbook_xml)
-        self.assertIn('name="Data"', workbook_xml)
-        self.assertIn('name="ChartsData"', workbook_xml)
-        self.assertIn("limits", data_sheet)
-        self.assertIn("cash_payments", data_sheet)
+        self.assertIn('name="Параметры"', workbook_xml)
+        self.assertIn('name="Сводка по объектам"', workbook_xml)
+        self.assertIn('name="Итоги по объектам"', workbook_xml)
+        self.assertIn('name="Динамика"', workbook_xml)
+        self.assertIn('name="Детализация"', workbook_xml)
+        self.assertIn("План / лимиты", data_sheet)
+        self.assertIn("Кассовые выплаты", data_sheet)
 
     def test_xlsx_export_endpoint_returns_attachment(self) -> None:
         payload = AnalyticsExportRequest(
@@ -422,9 +497,11 @@ class AnalyticsTests(unittest.TestCase):
         with ZipFile(BytesIO(response.body)) as archive:
             workbook_xml = archive.read("xl/workbook.xml").decode("utf-8")
 
-        self.assertIn('name="Summary"', workbook_xml)
-        self.assertIn('name="Data"', workbook_xml)
-        self.assertIn('name="ChartsData"', workbook_xml)
+        self.assertIn('name="Параметры"', workbook_xml)
+        self.assertIn('name="Сводка по объектам"', workbook_xml)
+        self.assertIn('name="Итоги по объектам"', workbook_xml)
+        self.assertIn('name="Динамика"', workbook_xml)
+        self.assertIn('name="Детализация"', workbook_xml)
 
     def test_xlsx_export_endpoint_rejects_unsupported_metric(self) -> None:
         payload = AnalyticsExportRequest(batch_id="batch-1", metrics=["unknown_metric"])
@@ -464,6 +541,19 @@ def _fact(
         value=value,
         raw_data={},
     )
+
+
+class _AsyncUploadStub:
+    def __init__(self, *, filename: str, content: bytes) -> None:
+        self.filename = filename
+        self._stream = BytesIO(content)
+        self.closed = False
+
+    async def read(self, size: int = -1) -> bytes:
+        return self._stream.read(size)
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 if __name__ == "__main__":

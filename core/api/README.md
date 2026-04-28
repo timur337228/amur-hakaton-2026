@@ -94,6 +94,25 @@ curl.exe -X POST http://localhost:8000/api/v1/imports/archive `
 - `GET /api/v1/imports/{batch_id}` — сводка по импорту
 - `GET /api/v1/imports/{batch_id}/files` — список импортированных файлов
 - `GET /api/v1/imports/{batch_id}/errors` — ошибки импорта
+- `POST /api/v1/analytics/transcribe-audio` — speech-to-text для голосового запроса
+
+## Голосовой ввод
+
+В интерфейсе можно загрузить аудиофайл или записать голосовой запрос с микрофона.
+
+Поддерживаются два режима:
+
+- `Whisper API` через `302.ai`
+- локальный `faster-whisper`
+
+Выбор задаётся в `config.yaml` через секцию `whisper` или через env-переменные:
+
+- `WHISPER_PROVIDER=api|local`
+- `WHISPER_API_MODEL=whisper-v3-turbo`
+- `WHISPER_LOCAL_MODEL=large-v3-turbo`
+- `WHISPER_POSTPROCESS_WITH_LLM=true|false`
+
+Если включён `WHISPER_POSTPROCESS_WITH_LLM`, после распознавания система дополнительно уточняет текст через LLM по контексту текущего набора данных. Это помогает поправлять типичные ASR-ошибки вроде `Благовещ` -> `Благовещенск`, но добавляет задержку. По умолчанию этап выключен.
 
 ## CORS
 

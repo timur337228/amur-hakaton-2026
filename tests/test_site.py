@@ -41,12 +41,19 @@ class SiteTests(unittest.TestCase):
         self.assertIn('id="import-dropzone"', html)
         self.assertIn('id="choose-archive-btn"', html)
         self.assertIn('id="choose-folder-btn"', html)
+        self.assertIn('id="record-audio-btn"', html)
+        self.assertIn('id="record-audio-label"', html)
+        self.assertIn("Примеры запросов", html)
+        self.assertIn('class="chip prompt-chip"', html)
         self.assertIn('id="run-query-btn"', html)
         self.assertIn('id="export-btn"', html)
         self.assertIn('id="preview-table"', html)
         self.assertIn('id="results-table"', html)
         self.assertNotIn('id="local-import-btn"', html)
         self.assertNotIn('id="resolve-btn"', html)
+        self.assertNotIn('id="stop-audio-btn"', html)
+        self.assertNotIn('id="choose-audio-btn"', html)
+        self.assertNotIn('id="audio-input"', html)
 
     def test_fastapi_app_exposes_only_api_and_system_routes(self) -> None:
         route_paths = {getattr(route, "path", None) for route in app.routes}

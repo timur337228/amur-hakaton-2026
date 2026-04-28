@@ -75,6 +75,7 @@ storage_test*/
 tmp/
 temp/
 .codex
+.cache/
 
 # Large/imported source files
 *.zip

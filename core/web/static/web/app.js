@@ -1,11 +1,12 @@
 const API_BASE_URL = (window.BUDGET_API_BASE_URL || "").replace(/\/$/, "");
 const IMPORT_TERMINAL_STATUSES = new Set(["completed", "completed_with_errors", "failed"]);
 const ARCHIVE_EXTENSIONS = [".zip", ".rar", ".7z"];
-
 const state = {
   batchId: localStorage.getItem("budgetAnalytics.batchId") || "",
   filterOptions: null,
   hasQueryResult: false,
+  activeRecording: null,
+  pointerRecordingMode: false,
 };
 
 const elements = {
@@ -19,6 +20,9 @@ const elements = {
   datasetSummary: document.getElementById("dataset-summary"),
   batchMeta: document.getElementById("batch-meta"),
   textQueryInput: document.getElementById("text-query-input"),
+  recordAudioBtn: document.getElementById("record-audio-btn"),
+  recordAudioLabel: document.getElementById("record-audio-label"),
+  audioStatus: document.getElementById("audio-status"),
   dateFromInput: document.getElementById("date-from-input"),
   dateToInput: document.getElementById("date-to-input"),
   objectQueryInput: document.getElementById("object-query-input"),
@@ -73,7 +77,8 @@ initialize().catch(handleError);
 async function initialize() {
   renderGroupByOptions();
   bindEvents();
-  renderEmptyState();
+  renderEmptyState({ preserveBatch: Boolean(state.batchId) });
+  syncAudioRecordingButtons();
   elements.exportBtn.disabled = true;
   await bootstrapDataset();
 }
@@ -83,6 +88,11 @@ function bindEvents() {
   elements.chooseFolderBtn.addEventListener("click", () => elements.folderInput.click());
   elements.archiveInput.addEventListener("change", wrapAsync(handleArchiveSelection));
   elements.folderInput.addEventListener("change", wrapAsync(handleFolderSelection));
+  elements.recordAudioBtn.addEventListener("click", wrapAsync(handleVoiceButtonClick));
+  elements.recordAudioBtn.addEventListener("pointerdown", wrapAsync(handleVoicePointerDown));
+  elements.recordAudioBtn.addEventListener("pointerup", wrapAsync(handleVoicePointerUp));
+  elements.recordAudioBtn.addEventListener("pointercancel", wrapAsync(handleVoicePointerCancel));
+  elements.recordAudioBtn.addEventListener("pointerleave", wrapAsync(handleVoicePointerLeave));
   elements.runQueryBtn.addEventListener("click", wrapAsync(runQuery));
   elements.exportBtn.addEventListener("click", wrapAsync(exportXlsx));
   elements.promptChips.forEach((chip) =>
@@ -170,6 +180,130 @@ async function handleFolderSelection(event) {
   }
   await uploadFolderFiles(files);
   elements.folderInput.value = "";
+}
+
+async function startAudioRecording() {
+  if (state.activeRecording) {
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    showToast("Запись с микрофона недоступна в этом браузере.");
+    return;
+  }
+
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const mimeType = preferredRecordingMimeType();
+  if (!mimeType) {
+    stopStreamTracks(stream);
+    setAudioStatus("Этот браузер не умеет записывать звук в поддерживаемый формат.", "danger");
+    return;
+  }
+  const mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  const chunks = [];
+
+  mediaRecorder.addEventListener("dataavailable", (event) => {
+    if (event.data && event.data.size > 0) {
+      chunks.push(event.data);
+    }
+  });
+
+  mediaRecorder.addEventListener("stop", () => {
+    const recording = state.activeRecording;
+    state.activeRecording = null;
+    stopStreamTracks(stream);
+    syncAudioRecordingButtons();
+
+    const audioBlob = new Blob(chunks, { type: recording?.mimeType || mediaRecorder.mimeType || "audio/webm" });
+    if (!audioBlob.size) {
+      setAudioStatus("Запись не получилась. Попробуй ещё раз.", "danger");
+      return;
+    }
+
+    const extension = extensionFromMimeType(audioBlob.type);
+    const audioFile = new File([audioBlob], `voice-query-${Date.now()}.${extension}`, { type: audioBlob.type });
+    transcribeAudioFile(audioFile, elements.recordAudioBtn, "Распознаю").catch(handleError);
+  });
+
+  mediaRecorder.addEventListener("error", () => {
+    state.activeRecording = null;
+    stopStreamTracks(stream);
+    syncAudioRecordingButtons();
+    setAudioStatus("Не удалось записать голос. Попробуй загрузить аудиофайл.", "danger");
+  });
+
+  state.activeRecording = {
+    mediaRecorder,
+    mimeType: mediaRecorder.mimeType || mimeType || "audio/webm",
+  };
+  mediaRecorder.start();
+  syncAudioRecordingButtons();
+  setAudioStatus(isTouchLikeDevice() ? "Идёт запись. Отпусти кнопку, чтобы распознать голос." : "Идёт запись. Нажми кнопку ещё раз, чтобы распознать голос.", "warn");
+}
+
+async function stopAudioRecording() {
+  if (!state.activeRecording) {
+    return;
+  }
+  setAudioStatus("Завершаю запись…", "muted");
+  state.activeRecording.mediaRecorder.stop();
+}
+
+async function handleVoiceButtonClick(event) {
+  if (state.pointerRecordingMode) {
+    return;
+  }
+  event.preventDefault();
+  if (state.activeRecording) {
+    await stopAudioRecording();
+    return;
+  }
+  await startAudioRecording();
+}
+
+async function handleVoicePointerDown(event) {
+  if (event.pointerType === "mouse") {
+    return;
+  }
+  event.preventDefault();
+  state.pointerRecordingMode = true;
+  elements.recordAudioBtn.setPointerCapture?.(event.pointerId);
+  if (!state.activeRecording) {
+    await startAudioRecording();
+  }
+}
+
+async function handleVoicePointerUp(event) {
+  if (!state.pointerRecordingMode) {
+    return;
+  }
+  event.preventDefault();
+  state.pointerRecordingMode = false;
+  elements.recordAudioBtn.releasePointerCapture?.(event.pointerId);
+  if (state.activeRecording) {
+    await stopAudioRecording();
+  }
+}
+
+async function handleVoicePointerCancel(event) {
+  if (!state.pointerRecordingMode) {
+    return;
+  }
+  event.preventDefault();
+  state.pointerRecordingMode = false;
+  if (state.activeRecording) {
+    await stopAudioRecording();
+  }
+}
+
+async function handleVoicePointerLeave(event) {
+  if (!state.pointerRecordingMode || event.pointerType === "mouse") {
+    return;
+  }
+  event.preventDefault();
+  state.pointerRecordingMode = false;
+  if (state.activeRecording) {
+    await stopAudioRecording();
+  }
 }
 
 async function handleDrop(event) {
@@ -297,6 +431,41 @@ async function uploadFolderFiles(files) {
   });
 }
 
+async function transcribeAudioFile(file, sourceButton, loadingLabel) {
+  setButtonLoading(sourceButton, true, loadingLabel);
+  elements.recordAudioBtn.disabled = true;
+  setAudioStatus("Распознаю голосовой запрос…", "warn");
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+    if (state.batchId) {
+      formData.append("batch_id", state.batchId);
+    }
+
+    const response = await fetchJson(apiUrl("/api/v1/analytics/transcribe-audio"), {
+      method: "POST",
+      body: formData,
+    });
+
+    const normalizedText = response.normalized_text || response.raw_text || "";
+    elements.textQueryInput.value = normalizedText;
+    elements.textQueryInput.focus();
+    setAudioStatus(
+      response.correction_applied
+        ? "Голосовой запрос распознан и уточнён по контексту набора."
+        : "Голосовой запрос распознан. Текст уже можно запускать в аналитику.",
+      "ok"
+    );
+    if (response.warning) {
+      showToast(response.warning);
+    }
+  } finally {
+    setButtonLoading(sourceButton, false);
+    syncAudioRecordingButtons();
+  }
+}
+
 async function completeImport(response, options = {}) {
   state.batchId = response.batch_id;
   localStorage.setItem("budgetAnalytics.batchId", state.batchId);
@@ -392,13 +561,8 @@ async function waitForBatchReady(batchId, initialBatch) {
 }
 
 function renderBatchMeta(batch, stats) {
-  const parts = [
-    `Набор загружен: ${formatDateTime(batch.created_at)}`,
-  ];
-  if (stats.date_min || stats.date_max) {
-    parts.push(`период: ${stats.date_min || "—"} — ${stats.date_max || "—"}`);
-  }
-  elements.batchMeta.textContent = parts.join(" · ");
+  elements.batchMeta.textContent = "";
+  elements.batchMeta.hidden = true;
 }
 
 function fillFilterOptions(filterOptions) {
@@ -567,7 +731,8 @@ function renderResults(rows) {
 
 function renderDatasetSummary(items) {
   if (!items.length) {
-    elements.datasetSummary.innerHTML = '<div class="stat-card"><span>Набор</span><strong>Нет данных</strong></div>';
+    const label = state.batchId ? "Подключаю набор" : "Ожидание данных";
+    elements.datasetSummary.innerHTML = `<div class="stat-card"><span>Набор</span><strong>${escapeHtml(label)}</strong></div>`;
     return;
   }
   elements.datasetSummary.innerHTML = items
@@ -782,7 +947,8 @@ function renderTable(table, rows) {
     .join("");
 }
 
-function renderEmptyState() {
+function renderEmptyState(options = {}) {
+  const preserveBatch = Boolean(options.preserveBatch);
   state.hasQueryResult = false;
   toggleResultsVisibility(false);
   renderDatasetSummary([]);
@@ -795,8 +961,15 @@ function renderEmptyState() {
   renderTable(elements.resultsTable, []);
   setBadge(elements.previewStatus, "нет данных", "muted");
   setBadge(elements.queryStatus, "нет данных", "muted");
-  elements.batchMeta.textContent = "Если папка project_file найдена, система подключит её автоматически.";
+  elements.batchMeta.textContent = "";
+  elements.batchMeta.hidden = true;
   elements.exportBtn.disabled = true;
+  setAudioStatus("", "muted");
+  if (preserveBatch) {
+    setBadge(elements.batchStatus, "подключение", "muted");
+    setBadge(elements.importStatusBadge, "подключаю набор", "muted");
+  }
+  syncAudioRecordingButtons();
 }
 
 function resetQueryPresentation() {
@@ -816,6 +989,64 @@ function toggleResultsVisibility(visible) {
   elements.resultsSummarySection.hidden = !visible;
   elements.chartsSection.hidden = !visible;
   elements.resultsTableSection.hidden = !visible;
+}
+
+function syncAudioRecordingButtons() {
+  const isRecording = Boolean(state.activeRecording);
+  elements.recordAudioBtn.disabled = false;
+  elements.recordAudioBtn.classList.toggle("is-recording", isRecording);
+  elements.recordAudioLabel.textContent = isRecording ? "Остановить запись" : idleVoiceButtonLabel();
+}
+
+function setAudioStatus(message, mode) {
+  elements.audioStatus.textContent = message;
+  elements.audioStatus.className = `voice-status ${mode}`;
+  elements.audioStatus.hidden = !message;
+}
+
+function idleVoiceButtonLabel() {
+  return isTouchLikeDevice() ? "Удерживай и говори" : "Нажми и говори";
+}
+
+function isTouchLikeDevice() {
+  return Boolean(window.matchMedia?.("(pointer: coarse)").matches || navigator.maxTouchPoints > 0);
+}
+
+function preferredRecordingMimeType() {
+  const candidates = [
+    "audio/mp4",
+    "audio/mp4;codecs=mp4a.40.2",
+    "audio/webm;codecs=opus",
+    "audio/webm",
+  ];
+  for (const mimeType of candidates) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported?.(mimeType)) {
+      return mimeType;
+    }
+  }
+  return "";
+}
+
+function extensionFromMimeType(mimeType) {
+  if (mimeType.includes("wav")) {
+    return "wav";
+  }
+  if (mimeType.includes("mpeg") || mimeType.includes("mp3")) {
+    return "mp3";
+  }
+  if (mimeType.includes("m4a")) {
+    return "m4a";
+  }
+  if (mimeType.includes("mp4")) {
+    return "mp4";
+  }
+  return "webm";
+}
+
+function stopStreamTracks(stream) {
+  for (const track of stream.getTracks()) {
+    track.stop();
+  }
 }
 
 function checkedValues(name) {

@@ -233,3 +233,21 @@ class AnalyticsResolveTextResponse(BaseModel):
     llm_interpretation: AnalyticsLLMInterpretation | None = None
     resolved_request: dict
     warning: str | None = None
+
+
+class AudioTranscriptWord(BaseModel):
+    word: str
+    start: float | None = None
+    end: float | None = None
+
+
+class AudioTranscriptionResponse(BaseModel):
+    provider: str
+    model: str
+    raw_text: str
+    normalized_text: str
+    correction_applied: bool
+    language: str | None = None
+    duration_seconds: float | None = None
+    words: list[AudioTranscriptWord] = Field(default_factory=list)
+    warning: str | None = None

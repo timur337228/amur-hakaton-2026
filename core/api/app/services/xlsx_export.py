@@ -6,56 +6,181 @@ from io import BytesIO
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from ..schemas import AnalyticsQueryResponse
+from .analytics import GROUP_BY_LABELS, METRIC_LABELS, SOURCE_GROUP_LABELS
+from ..schemas import AnalyticsQueryResponse, AnalyticsRow
 
 
 XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
+OBJECT_HEADERS = [
+    "Объект / мероприятие",
+    "Период",
+    "План / лимиты",
+    "Бюджетные обязательства",
+    "Кассовые выплаты",
+    "Соглашения",
+    "Контракты / договоры",
+    "Платежи по контрактам",
+    "Остаток лимитов",
+    "Исполнение, %",
+    "Итого по строке",
+]
+
+OBJECT_METRIC_COLUMNS = [
+    ("limits", "План / лимиты"),
+    ("obligations", "Бюджетные обязательства"),
+    ("cash_payments", "Кассовые выплаты"),
+    ("agreement_amount", "Соглашения"),
+    ("contract_amount", "Контракты / договоры"),
+    ("contract_payment", "Платежи по контрактам"),
+    ("remaining_limits", "Остаток лимитов"),
+]
+
 
 def build_analytics_xlsx(response: AnalyticsQueryResponse) -> bytes:
     sheets = [
-        ("Summary", _summary_rows(response)),
-        ("Data", _data_rows(response)),
-        ("ChartsData", _charts_rows(response)),
+        ("Параметры", _parameter_rows(response)),
+        ("Сводка по объектам", _object_summary_rows(response)),
+        ("Итоги по объектам", _object_totals_rows(response)),
+        ("Динамика", _dynamics_rows(response)),
+        ("Детализация", _detail_rows(response)),
     ]
     return _build_workbook(sheets)
 
 
-def _summary_rows(response: AnalyticsQueryResponse) -> list[list[Any]]:
+def _parameter_rows(response: AnalyticsQueryResponse) -> list[list[Any]]:
     meta = response.meta
+    request = meta.resolved_request or {}
+    filters = request.get("filters") or {}
     rows: list[list[Any]] = [
-        ["Report", "Analytics export"],
-        ["Batch ID", meta.batch_id],
-        ["Date from", meta.date_from],
-        ["Date to", meta.date_to],
-        ["Sources", ", ".join(meta.sources)],
-        ["Metrics", ", ".join(meta.metrics)],
-        ["Group by", ", ".join(meta.group_by)],
-        ["Rows count", meta.rows_count],
-        ["Returned rows", meta.returned_rows],
-        ["Execution percent", response.execution_percent],
+        ["Отчёт", "Бюджетная аналитика"],
+        ["Текстовый запрос", meta.text_query or ""],
+        ["Пакет данных", meta.batch_id],
+        ["Период отчёта", _meta_period_label(response)],
+        ["Источники", ", ".join(SOURCE_GROUP_LABELS.get(source, source) for source in meta.sources)],
+        ["Показатели", ", ".join(METRIC_LABELS.get(metric, metric) for metric in meta.metrics)],
+        ["Группировка интерфейса", ", ".join(GROUP_BY_LABELS.get(item, item) for item in meta.group_by)],
+        ["Объект", filters.get("object_query") or ""],
+        ["Организация", filters.get("organization_query") or ""],
+        ["Бюджет", filters.get("budget_query") or ""],
+        ["КФСР", filters.get("kfsr_code") or ""],
+        ["КЦСР", filters.get("kcsr_code") or ""],
+        ["КВР", filters.get("kvr_code") or ""],
+        ["Источник средств", filters.get("funding_source") or ""],
+        ["Строк в результате", meta.rows_count],
+        ["Строк в выгрузке", meta.returned_rows],
+        ["Исполнение, %", response.execution_percent],
         [],
-        ["Metric", "Value"],
+        ["Итоговый показатель", "Значение"],
     ]
-    rows.extend([metric, value] for metric, value in response.summary.items())
+    rows.extend([METRIC_LABELS.get(metric, metric), value] for metric, value in response.summary.items())
     return rows
 
 
-def _data_rows(response: AnalyticsQueryResponse) -> list[list[Any]]:
-    dimension_keys = _dimension_keys(response)
-    rows: list[list[Any]] = [dimension_keys + ["metric", "value"]]
+def _object_summary_rows(response: AnalyticsQueryResponse) -> list[list[Any]]:
+    buckets = _group_rows_by_object_and_period(response)
+    rows: list[list[Any]] = [OBJECT_HEADERS]
+    for (object_name, period), metrics in buckets.items():
+        rows.append(_object_summary_row(object_name, period, metrics))
+    if len(rows) == 1:
+        rows.append(["Нет данных", "", None, None, None, None, None, None, None, None, None])
+    return rows
+
+
+def _object_totals_rows(response: AnalyticsQueryResponse) -> list[list[Any]]:
+    buckets = _group_rows_by_object_and_period(response)
+    totals: dict[str, dict[str, Decimal]] = {}
+    for (object_name, _period), metrics in buckets.items():
+        object_totals = totals.setdefault(object_name, {})
+        for metric, value in metrics.items():
+            object_totals[metric] = object_totals.get(metric, Decimal("0.00")) + value
+
+    rows: list[list[Any]] = [OBJECT_HEADERS]
+    for object_name, metrics in totals.items():
+        rows.append(_object_summary_row(object_name, "Итого", metrics))
+    if len(rows) == 1:
+        rows.append(["Нет данных", "", None, None, None, None, None, None, None, None, None])
+    return rows
+
+
+def _dynamics_rows(response: AnalyticsQueryResponse) -> list[list[Any]]:
+    rows: list[list[Any]] = [["Объект / мероприятие", "Период", "Показатель", "Значение"]]
     for row in response.rows:
-        rows.append([row.dimensions.get(key) for key in dimension_keys] + [row.metric, row.value])
+        rows.append(
+            [
+                _object_name_for_row(row, response),
+                _period_for_row(row, response),
+                METRIC_LABELS.get(row.metric, row.metric),
+                row.value,
+            ]
+        )
+    if len(rows) == 1:
+        rows.append(["Нет данных", "", "", None])
     return rows
 
 
-def _charts_rows(response: AnalyticsQueryResponse) -> list[list[Any]]:
-    rows: list[list[Any]] = [["Timeseries"], ["period", "metric", "value"]]
-    if response.charts:
-        rows.extend([point.period, point.metric, point.value] for point in response.charts.timeseries)
-        rows.extend([[], ["By metric"], ["metric", "value"]])
-        rows.extend([row.metric, row.value] for row in response.charts.by_metric)
+def _detail_rows(response: AnalyticsQueryResponse) -> list[list[Any]]:
+    dimension_keys = _dimension_keys(response)
+    headers = [_dimension_label(key) for key in dimension_keys] + ["Показатель", "Значение"]
+    rows: list[list[Any]] = [headers]
+    for row in response.rows:
+        rows.append(
+            [row.dimensions.get(key) for key in dimension_keys]
+            + [METRIC_LABELS.get(row.metric, row.metric), row.value]
+        )
+    if len(rows) == 1:
+        rows.append(["Нет данных"] + [""] * (len(headers) - 1))
     return rows
+
+
+def _group_rows_by_object_and_period(response: AnalyticsQueryResponse) -> dict[tuple[str, str], dict[str, Decimal]]:
+    buckets: dict[tuple[str, str], dict[str, Decimal]] = {}
+    for row in response.rows:
+        key = (_object_name_for_row(row, response), _period_for_row(row, response))
+        metric_bucket = buckets.setdefault(key, {})
+        metric_bucket[row.metric] = metric_bucket.get(row.metric, Decimal("0.00")) + row.value
+    return dict(sorted(buckets.items(), key=lambda item: (item[0][0], item[0][1])))
+
+
+def _object_summary_row(object_name: str, period: str, metrics: dict[str, Decimal]) -> list[Any]:
+    values = [metrics.get(metric) for metric, _label in OBJECT_METRIC_COLUMNS]
+    limits = metrics.get("limits")
+    cash = metrics.get("cash_payments")
+    execution_percent = None
+    if limits not in {None, Decimal("0.00")} and cash is not None:
+        execution_percent = ((cash / limits) * Decimal("100")).quantize(Decimal("0.01"))
+    total_value = sum((value for value in values if isinstance(value, Decimal)), Decimal("0.00"))
+    return [object_name, period, *values, execution_percent, total_value]
+
+
+def _object_name_for_row(row: AnalyticsRow, response: AnalyticsQueryResponse) -> str:
+    object_name = row.dimensions.get("object_name")
+    if object_name:
+        return str(object_name)
+    request = response.meta.resolved_request or {}
+    filters = request.get("filters") or {}
+    if filters.get("object_query"):
+        return str(filters["object_query"])
+    return "Все объекты"
+
+
+def _period_for_row(row: AnalyticsRow, response: AnalyticsQueryResponse) -> str:
+    dimensions = row.dimensions
+    if dimensions.get("day"):
+        return str(dimensions["day"])
+    year = dimensions.get("year")
+    month = dimensions.get("month")
+    if year and month:
+        return f"{int(year):04d}-{int(month):02d}"
+    if year:
+        return str(year)
+    return _meta_period_label(response)
+
+
+def _meta_period_label(response: AnalyticsQueryResponse) -> str:
+    date_from = response.meta.date_from.isoformat() if response.meta.date_from else "—"
+    date_to = response.meta.date_to.isoformat() if response.meta.date_to else "—"
+    return f"{date_from} — {date_to}"
 
 
 def _dimension_keys(response: AnalyticsQueryResponse) -> list[str]:
@@ -67,6 +192,12 @@ def _dimension_keys(response: AnalyticsQueryResponse) -> list[str]:
                 seen.add(key)
                 keys.append(key)
     return keys
+
+
+def _dimension_label(key: str) -> str:
+    if key in {"year", "month", "day"}:
+        return GROUP_BY_LABELS.get(key, key)
+    return GROUP_BY_LABELS.get(key, key.replace("_", " ").title())
 
 
 def _build_workbook(sheets: list[tuple[str, list[list[Any]]]]) -> bytes:
@@ -177,7 +308,7 @@ def _styles() -> str:
 def _worksheet(rows: list[list[Any]]) -> str:
     sheet_rows = "\n".join(_row_xml(index, row) for index, row in enumerate(rows, start=1))
     max_col = max((len(row) for row in rows), default=1)
-    cols = "\n".join(f'<col min="{index}" max="{index}" width="18" customWidth="1"/>' for index in range(1, max_col + 1))
+    cols = "\n".join(f'<col min="{index}" max="{index}" width="22" customWidth="1"/>' for index in range(1, max_col + 1))
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <sheetViews><sheetView workbookViewId="0"/></sheetViews>

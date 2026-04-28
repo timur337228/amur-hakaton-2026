@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
+from tempfile import NamedTemporaryFile
 
 from ..db import get_db
 from ..models import ImportBatch
 from ..schemas import (
+    AudioTranscriptionResponse,
     AnalyticsExportRequest,
     AnalyticsFilterOptionsResponse,
     AnalyticsOptionsResponse,
@@ -25,6 +30,12 @@ from ..services.analytics import (
     distinct_field_values,
     resolve_analytics_text,
     run_analytics_request,
+)
+from ..services.speech_to_text import (
+    SpeechToTextConfigurationError,
+    SpeechToTextServiceError,
+    SUPPORTED_AUDIO_EXTENSIONS,
+    transcribe_audio_file,
 )
 from ..services.xlsx_export import XLSX_MEDIA_TYPE, build_analytics_xlsx
 
@@ -45,6 +56,57 @@ def resolve_text(payload: AnalyticsQueryRequest, db: Session = Depends(get_db)) 
         return resolve_analytics_text(db, payload)
     except AnalyticsValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/transcribe-audio", response_model=AudioTranscriptionResponse)
+async def transcribe_audio(
+    file: Annotated[UploadFile, File(description="Audio query file")],
+    batch_id: Annotated[str | None, Form()] = None,
+    db: Session = Depends(get_db),
+) -> AudioTranscriptionResponse:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Audio file is required.")
+
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in SUPPORTED_AUDIO_EXTENSIONS:
+        supported = ", ".join(sorted(SUPPORTED_AUDIO_EXTENSIONS))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported audio format. Supported extensions: {supported}.",
+        )
+
+    filter_options = None
+    if batch_id:
+        if not db.get(ImportBatch, batch_id):
+            raise HTTPException(status_code=404, detail="Import batch not found.")
+        filter_options = analytics_filter_options(db, batch_id=batch_id, limit=80)
+
+    try:
+        with NamedTemporaryFile(delete=False, suffix=suffix or ".audio") as temporary_file:
+            while chunk := await file.read(1024 * 1024):
+                temporary_file.write(chunk)
+            temp_path = Path(temporary_file.name)
+        result = transcribe_audio_file(temp_path, filter_options=filter_options)
+    except SpeechToTextConfigurationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except SpeechToTextServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        await file.close()
+        if "temp_path" in locals():
+            temp_path.unlink(missing_ok=True)
+
+    return AudioTranscriptionResponse(
+        provider=result.provider,
+        model=result.model,
+        raw_text=result.raw_text,
+        normalized_text=result.normalized_text,
+        correction_applied=result.correction_applied,
+        language=result.language,
+        duration_seconds=result.duration_seconds,
+        words=result.words,
+        warning=result.warning,
+    )
 
 
 @router.post("/export/xlsx")
