@@ -1,0 +1,99 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: budget-analytics-caddy
+    restart: unless-stopped
+    depends_on:
+      - web
+      - api
+    environment:
+      DOMAIN: ${DOMAIN:-budget-analytics28.ru}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  db:
+    image: postgres:16-alpine
+    container_name: budget-analytics-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-budget_analytics}
+      POSTGRES_USER: ${POSTGRES_USER:-budget_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-budget_app_dev}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-budget_app} -d ${POSTGRES_DB:-budget_analytics}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+    container_name: budget-analytics-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-budget_app}:${POSTGRES_PASSWORD:-budget_app_dev}@db:5432/${POSTGRES_DB:-budget_analytics}
+      DATABASE_SYNC_URL: postgresql+psycopg://${POSTGRES_USER:-budget_app}:${POSTGRES_PASSWORD:-budget_app_dev}@db:5432/${POSTGRES_DB:-budget_analytics}
+      STORAGE_DIR: /app/storage
+      ALLOW_LOCAL_IMPORT: ${ALLOW_LOCAL_IMPORT:-true}
+      DEPLOY_MODE: ${DEPLOY_MODE:-true}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-https://budget-analytics28.ru,https://www.budget-analytics28.ru}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.302.ai/v1/chat/completions}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
+      WHISPER_PROVIDER: ${WHISPER_PROVIDER:-api}
+      WHISPER_API_KEY: ${WHISPER_API_KEY:-}
+      WHISPER_API_BASE_URL: ${WHISPER_API_BASE_URL:-https://api.302.ai/v1/audio/transcriptions}
+      WHISPER_API_MODEL: ${WHISPER_API_MODEL:-whisper-v3-turbo}
+      WHISPER_LOCAL_MODEL: ${WHISPER_LOCAL_MODEL:-large-v3-turbo}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
+      WHISPER_TEMPERATURE: ${WHISPER_TEMPERATURE:-0}
+      WHISPER_RESPONSE_FORMAT: ${WHISPER_RESPONSE_FORMAT:-verbose_json}
+      WHISPER_TIMESTAMP_GRANULARITY: ${WHISPER_TIMESTAMP_GRANULARITY:-word}
+      WHISPER_DIARIZE: ${WHISPER_DIARIZE:-false}
+      WHISPER_TIMEOUT_SECONDS: ${WHISPER_TIMEOUT_SECONDS:-120}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-auto}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      WHISPER_VAD_FILTER: ${WHISPER_VAD_FILTER:-true}
+      WHISPER_POSTPROCESS_WITH_LLM: ${WHISPER_POSTPROCESS_WITH_LLM:-false}
+    command: >
+      uvicorn core.api.app.main:app
+      --host 0.0.0.0
+      --port 8000
+    volumes:
+      - ./storage:/app/storage
+      - ./project_file:/app/project_file
+
+  web:
+    build:
+      context: .
+    container_name: budget-analytics-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-budget-analytics-prod-secret-key}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-budget-analytics28.ru,www.budget-analytics28.ru,31.129.106.77}
+      BUDGET_API_BASE_URL: ${BUDGET_API_BASE_URL:-}
+      DEPLOY_MODE: ${DEPLOY_MODE:-true}
+    command: >
+      sh -c "python manage.py collectstatic --noinput &&
+      uvicorn core.web.asgi:application
+      --host 0.0.0.0
+      --port 8001"
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

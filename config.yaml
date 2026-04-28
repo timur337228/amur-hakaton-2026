@@ -24,3 +24,4 @@ whisper:
   compute_type: int8
   vad_filter: true
   postprocess_with_llm: false
+deploy: true
