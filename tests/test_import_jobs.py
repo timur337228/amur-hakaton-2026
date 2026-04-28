@@ -1,25 +1,29 @@
 from __future__ import annotations
 
-import importlib.util
+import os
+import time
 import unittest
 from pathlib import Path
 
-from tests.helpers import workspace_tempdir
-
-
-TEST_DB_PATH = Path.cwd() / ".test_tmp" / "importer_integration.sqlite"
+TEST_DB_PATH = Path.cwd() / ".test_tmp" / "import_jobs_test.sqlite"
 TEST_DB_PATH.parent.mkdir(exist_ok=True)
+os.environ["DATABASE_SYNC_URL"] = f"sqlite+pysqlite:///{TEST_DB_PATH.as_posix()}"
+os.environ["STORAGE_DIR"] = "storage_test_jobs"
+
+from core.api.app.db import SessionLocal, run_migrations  # noqa: E402
+from core.api.app.models import BudgetFact, ImportBatch  # noqa: E402
+from core.api.app.services.import_jobs import ImportJobRunner  # noqa: E402
+from core.api.app.services.importer import ImportService  # noqa: E402
+from tests.helpers import workspace_tempdir  # noqa: E402
 
 
-@unittest.skipUnless(importlib.util.find_spec("psycopg"), "psycopg is not installed")
-class ImporterIntegrationTests(unittest.TestCase):
-    def test_import_local_path_smoke(self) -> None:
-        from core.api.app.db import SessionLocal, run_migrations
-        from core.api.app.models import BudgetFact
-        from core.api.app.services.importer import ImportService
-
+class ImportJobRunnerTests(unittest.TestCase):
+    def setUp(self) -> None:
         TEST_DB_PATH.unlink(missing_ok=True)
         run_migrations(database_url=f"sqlite+pysqlite:///{TEST_DB_PATH.as_posix()}")
+
+    def test_background_local_path_job_completes_and_updates_batch(self) -> None:
+        runner = ImportJobRunner()
 
         with workspace_tempdir() as directory:
             root = Path(directory)
@@ -37,11 +41,32 @@ class ImporterIntegrationTests(unittest.TestCase):
             )
 
             with SessionLocal() as db:
-                batch = ImportService(db).import_local_path(root / "dataset", original_name="test-dataset")
+                service = ImportService(db)
+                batch = service.create_batch(input_type="local_path", original_name="test-dataset")
+                service.mark_batch_queued(batch, "Queued local path import.")
+
+            runner.enqueue_local_path(batch.id, root / "dataset")
+            final_status = self._wait_for_batch_status(batch.id, {"completed", "completed_with_errors", "failed"})
+            runner.stop()
+
+            with SessionLocal() as db:
+                refreshed_batch = db.get(ImportBatch, batch.id)
                 facts_count = db.query(BudgetFact).filter(BudgetFact.batch_id == batch.id).count()
 
-        self.assertEqual(batch.status, "completed")
+        self.assertEqual(final_status, "completed")
+        self.assertIsNotNone(refreshed_batch)
+        self.assertEqual(refreshed_batch.status, "completed")
         self.assertGreater(facts_count, 0)
+
+    def _wait_for_batch_status(self, batch_id: str, terminal_statuses: set[str], timeout: float = 10.0) -> str:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with SessionLocal() as db:
+                batch = db.get(ImportBatch, batch_id)
+                if batch and batch.status in terminal_statuses:
+                    return batch.status
+            time.sleep(0.1)
+        self.fail(f"Timed out waiting for batch {batch_id} to reach {sorted(terminal_statuses)}")
 
 
 if __name__ == "__main__":

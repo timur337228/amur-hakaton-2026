@@ -153,7 +153,7 @@ def run_analytics_request(db: Session, request: AnalyticsQueryRequest) -> Analyt
     resolved_request, llm_patch, llm_applied, warning = resolve_analytics_request_details(db, request)
     response = run_analytics_query(db, resolved_request)
     response.meta.llm_applied = llm_applied
-    response.meta.text_query = request.text_query
+    response.meta.text_query = _normalize_optional_text(request.text_query)
     response.meta.resolved_request = _serialize_resolved_request(resolved_request)
     response.meta.warning = warning
     return response
@@ -168,7 +168,7 @@ def resolve_analytics_text(db: Session, request: AnalyticsQueryRequest) -> Analy
     resolved_request, llm_patch, llm_applied, warning = resolve_analytics_request_details(db, request)
     return AnalyticsResolveTextResponse(
         batch_id=request.batch_id,
-        text_query=request.text_query,
+        text_query=_normalize_optional_text(request.text_query),
         llm_applied=llm_applied,
         llm_interpretation=llm_patch,
         resolved_request=_serialize_resolved_request(resolved_request),

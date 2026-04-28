@@ -6,17 +6,23 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .db import init_db
+from .db import run_migrations
 from .routers.analytics import router as analytics_router
 from .routers.imports import router as imports_router
+from .services.import_jobs import get_import_job_runner
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
-    init_db()
-    yield
+    run_migrations()
+    job_runner = get_import_job_runner()
+    job_runner.start()
+    try:
+        yield
+    finally:
+        job_runner.stop()
 
 
 app = FastAPI(

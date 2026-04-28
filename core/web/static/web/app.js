@@ -1,4 +1,5 @@
 const API_BASE_URL = (window.BUDGET_API_BASE_URL || "").replace(/\/$/, "");
+const IMPORT_TERMINAL_STATUSES = new Set(["completed", "completed_with_errors", "failed"]);
 
 const state = {
   batchId: localStorage.getItem("budgetAnalytics.batchId") || "",
@@ -151,12 +152,12 @@ async function completeImport(response) {
   state.batchId = response.batch_id;
   localStorage.setItem("budgetAnalytics.batchId", state.batchId);
   elements.batchIdInput.value = state.batchId;
-  setBadge(elements.importStatusBadge, "готово", "ok");
-  showToast(`Импорт завершен. Batch: ${state.batchId}`);
+  setBadge(elements.importStatusBadge, "в очереди", "warn");
+  showToast(`Импорт поставлен в очередь. Batch: ${state.batchId}`);
   await loadBatch(state.batchId);
 }
 
-async function loadBatch(batchId) {
+async function loadBatch(batchId, options = {}) {
   if (!batchId) {
     showToast("Укажи batch_id.");
     return;
@@ -165,6 +166,18 @@ async function loadBatch(batchId) {
   localStorage.setItem("budgetAnalytics.batchId", batchId);
   elements.batchIdInput.value = batchId;
   setBadge(elements.batchStatus, "загрузка...", "warn");
+
+  let batch = await fetchJson(apiUrl(`/api/v1/imports/${batchId}`));
+  if (!IMPORT_TERMINAL_STATUSES.has(batch.status) && !options.skipWait) {
+    batch = await waitForBatchReady(batchId, batch);
+  }
+
+  if (batch.status === "failed") {
+    setBadge(elements.batchStatus, "ошибка", "danger");
+    setBadge(elements.importStatusBadge, "ошибка", "danger");
+    showToast(batch.message || "Импорт завершился с ошибкой.");
+    return;
+  }
 
   const [stats, preview, filterOptions] = await Promise.all([
     fetchJson(apiUrl(`/api/v1/imports/${batchId}/stats`)),
@@ -181,7 +194,8 @@ async function loadBatch(batchId) {
     ["Дата от", stats.date_min || "-"],
     ["Дата до", stats.date_max || "-"],
   ]);
-  setBadge(elements.batchStatus, "загружен", "ok");
+  setBadge(elements.batchStatus, batch.status === "completed_with_errors" ? "готов с ошибками" : "загружен", batch.status === "completed_with_errors" ? "warn" : "ok");
+  setBadge(elements.importStatusBadge, batch.status === "completed_with_errors" ? "с ошибками" : "готово", batch.status === "completed_with_errors" ? "warn" : "ok");
   fillFilterOptions(filterOptions);
   renderPreview(preview);
   renderResolvePreview({
@@ -189,6 +203,25 @@ async function loadBatch(batchId) {
     llm_applied: false,
     resolved_request: buildRequestPayload(),
   });
+}
+
+async function waitForBatchReady(batchId, initialBatch) {
+  let batch = initialBatch;
+  const startedAt = Date.now();
+
+  while (!IMPORT_TERMINAL_STATUSES.has(batch.status)) {
+    setBadge(elements.batchStatus, formatImportStatus(batch.status), "warn");
+    if (batch.message) {
+      elements.batchStatus.title = batch.message;
+    }
+    if (Date.now() - startedAt > 5 * 60 * 1000) {
+      throw new Error("Импорт не завершился за 5 минут. Попробуй обновить статус по batch_id позже.");
+    }
+    await sleep(1500);
+    batch = await fetchJson(apiUrl(`/api/v1/imports/${batchId}`));
+  }
+
+  return batch;
 }
 
 function fillFilterOptions(filterOptions) {
@@ -257,6 +290,20 @@ function renderSourceGroupOptions(sourceGroups) {
 
 function fillDatalist(element, values) {
   element.innerHTML = values.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("");
+}
+
+function formatImportStatus(status) {
+  const labels = {
+    created: "создан",
+    queued: "в очереди",
+    copying: "копирование",
+    extracting: "распаковка",
+    processing: "обработка",
+    completed: "готово",
+    completed_with_errors: "готово с ошибками",
+    failed: "ошибка",
+  };
+  return labels[status] || status;
 }
 
 async function resolveTextRequest() {
@@ -363,6 +410,10 @@ function buildRequestPayload() {
 function renderPreview(preview) {
   setBadge(elements.previewStatus, `${preview.returned_rows}/${preview.rows_count}`, "ok");
   renderTable(elements.previewTable, preview.rows || []);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function renderResults(rows) {

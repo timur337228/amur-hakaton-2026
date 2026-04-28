@@ -36,6 +36,13 @@ docker compose up --build
 .\.venv\Scripts\python.exe -m uvicorn core.api.app.main:app --reload --port 8000
 ```
 
+При старте API теперь применяет миграции `Alembic` вместо `Base.metadata.create_all(...)`.
+При необходимости их можно прогнать отдельно:
+
+```powershell
+.\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
 ## Локальный запуск Django
 
 ```powershell
@@ -73,6 +80,12 @@ curl.exe -X POST http://localhost:8000/api/v1/imports/archive `
 
 Для загрузки папки через фронтенд отправляются `multipart files` и соответствующие им `relative_paths`.
 
+Все варианты импорта теперь запускаются в фоне:
+
+- `POST` возвращает `batch_id` и статус `queued`
+- затем фронтенд или внешний клиент опрашивает `GET /api/v1/imports/{batch_id}`
+- после статуса `completed` или `completed_with_errors` можно запрашивать превью, статистику и аналитику
+
 ## Основные эндпоинты
 
 - `POST /api/v1/imports/archive` — принимает `.zip`, `.rar`, `.7z`
@@ -103,5 +116,4 @@ curl.exe -X POST http://localhost:8000/api/v1/imports/archive `
 
 Если LLM недоступен, аналитика и экспорт продолжают работать по ручным фильтрам, а интерфейс показывает предупреждение.
 
-На текущем этапе таблицы создаются автоматически при старте приложения.
-Позже это лучше заменить на миграции, например через Alembic.
+Схема БД управляется через `Alembic`.

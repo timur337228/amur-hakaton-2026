@@ -16,7 +16,8 @@ TEST_DB_PATH.parent.mkdir(exist_ok=True)
 os.environ["DATABASE_SYNC_URL"] = f"sqlite+pysqlite:///{TEST_DB_PATH.as_posix()}"
 os.environ["STORAGE_DIR"] = "storage_test"
 
-from core.api.app.db import Base, SessionLocal, engine  # noqa: E402
+from core.api.app import db as db_module  # noqa: E402
+from core.api.app.db import Base, SessionLocal  # noqa: E402
 from core.api.app.models import BudgetFact, ImportBatch  # noqa: E402
 from core.api.app.routers.analytics import export_analytics_xlsx, get_filter_options, query_analytics, resolve_text  # noqa: E402
 from core.api.app.routers.imports import get_import_preview, get_import_stats  # noqa: E402
@@ -32,9 +33,14 @@ from core.api.app.services.xlsx_export import XLSX_MEDIA_TYPE, build_analytics_x
 
 
 class AnalyticsTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        db_module.configure_database(f"sqlite+pysqlite:///{TEST_DB_PATH.as_posix()}")
+
     def setUp(self) -> None:
-        Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
+        Base.metadata.drop_all(bind=db_module.engine)
+        Base.metadata.create_all(bind=db_module.engine)
         with SessionLocal() as db:
             db.add(
                 ImportBatch(

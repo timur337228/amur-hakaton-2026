@@ -22,11 +22,12 @@ from ..schemas import (
 )
 from ..services.archive import ArchiveError, is_supported_archive
 from ..services.importer import ImportService
+from ..services.import_jobs import get_import_job_runner
 
 router = APIRouter(prefix="/api/v1/imports", tags=["imports"])
 
 
-@router.post("/archive", response_model=ImportBatchResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/archive", response_model=ImportBatchResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_archive(
     file: Annotated[UploadFile, File(description="ZIP, RAR or 7Z archive with project folders")],
     db: Session = Depends(get_db),
@@ -43,12 +44,14 @@ async def upload_archive(
     await _save_upload(file, archive_path)
 
     try:
-        return _batch_response(service.import_archive(batch, archive_path))
+        batch = service.mark_batch_queued(batch, "Queued archive import.")
+        get_import_job_runner().enqueue_archive(batch.id, archive_path)
+        return _batch_response(batch)
     except ArchiveError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/files", response_model=ImportBatchResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/files", response_model=ImportBatchResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_files(
     files: Annotated[list[UploadFile], File(description="Multiple files from a folder upload")],
     relative_paths: Annotated[list[str] | None, Form(description="Relative paths matching uploaded files")] = None,
@@ -71,10 +74,12 @@ async def upload_files(
         target_path.parent.mkdir(parents=True, exist_ok=True)
         await _save_upload(upload, target_path)
 
-    return _batch_response(service.process_directory(batch, extracted_dir))
+    batch = service.mark_batch_queued(batch, "Queued folder import.")
+    get_import_job_runner().enqueue_directory(batch.id, extracted_dir)
+    return _batch_response(batch)
 
 
-@router.post("/local-path", response_model=ImportBatchResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/local-path", response_model=ImportBatchResponse, status_code=status.HTTP_202_ACCEPTED)
 def import_local_path(payload: LocalImportRequest, db: Session = Depends(get_db)) -> ImportBatchResponse:
     settings = get_settings()
     if not settings.allow_local_import:
@@ -87,7 +92,10 @@ def import_local_path(payload: LocalImportRequest, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail=f"Path not found: {payload.path}")
 
     service = ImportService(db)
-    return _batch_response(service.import_local_path(source_path, original_name=payload.path))
+    batch = service.create_batch(input_type="local_path", original_name=payload.path)
+    batch = service.mark_batch_queued(batch, "Queued local path import.")
+    get_import_job_runner().enqueue_local_path(batch.id, source_path)
+    return _batch_response(batch)
 
 
 @router.get("/{batch_id}", response_model=ImportBatchResponse)
@@ -236,5 +244,6 @@ def _batch_response(batch: ImportBatch) -> ImportBatchResponse:
         error_count=batch.error_count,
         message=batch.message,
         created_at=batch.created_at,
+        started_at=batch.started_at,
         finished_at=batch.finished_at,
     )

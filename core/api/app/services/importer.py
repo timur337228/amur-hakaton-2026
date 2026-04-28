@@ -57,10 +57,29 @@ class ImportService:
         return self.batch_root(batch_id) / "extracted"
 
     def import_archive(self, batch: ImportBatch, archive_path: Path) -> ImportBatch:
+        return self.process_archive_batch(batch.id, archive_path)
+
+    def import_local_path(self, source_path: Path, original_name: str | None = None) -> ImportBatch:
+        batch = self.create_batch("local_path", original_name or str(source_path))
+        return self.process_local_path_batch(batch.id, source_path)
+
+    def mark_batch_queued(self, batch: ImportBatch, message: str) -> ImportBatch:
+        batch.status = "queued"
+        batch.message = message
+        batch.started_at = None
+        batch.finished_at = None
+        self.db.commit()
+        self.db.refresh(batch)
+        return batch
+
+    def process_archive_batch(self, batch_id: str, archive_path: Path) -> ImportBatch:
+        batch = self._require_batch(batch_id)
         extracted_dir = self.extracted_dir(batch.id)
+
         try:
             batch.status = "extracting"
             batch.started_at = _now()
+            batch.message = "Extracting archive in background."
             self.db.commit()
             extract_archive(archive_path, extracted_dir)
             return self.process_directory(batch, extracted_dir)
@@ -68,13 +87,14 @@ class ImportService:
             self._fail_batch(batch, str(exc))
             raise
 
-    def import_local_path(self, source_path: Path, original_name: str | None = None) -> ImportBatch:
-        batch = self.create_batch("local_path", original_name or str(source_path))
+    def process_local_path_batch(self, batch_id: str, source_path: Path) -> ImportBatch:
+        batch = self._require_batch(batch_id)
         extracted_dir = self.extracted_dir(batch.id)
 
         try:
             batch.status = "copying"
             batch.started_at = _now()
+            batch.message = "Copying local files in background."
             self.db.commit()
             _copy_path(source_path, extracted_dir)
             return self.process_directory(batch, extracted_dir)
@@ -82,9 +102,14 @@ class ImportService:
             self._fail_batch(batch, str(exc))
             raise
 
+    def process_saved_directory_batch(self, batch_id: str, root: Path) -> ImportBatch:
+        batch = self._require_batch(batch_id)
+        return self.process_directory(batch, root)
+
     def process_directory(self, batch: ImportBatch, root: Path) -> ImportBatch:
         batch.status = "processing"
         batch.started_at = batch.started_at or _now()
+        batch.message = "Processing extracted files."
         self.db.commit()
 
         files = [path for path in root.rglob("*") if path.is_file()]
@@ -217,6 +242,12 @@ class ImportService:
         batch.finished_at = _now()
         self.db.add(ImportErrorLog(batch_id=batch.id, level="error", message=message))
         self.db.commit()
+
+    def _require_batch(self, batch_id: str) -> ImportBatch:
+        batch = self.db.get(ImportBatch, batch_id)
+        if not batch:
+            raise ValueError(f"Import batch not found: {batch_id}")
+        return batch
 
 
 def detect_source_group(relative_path: str) -> str:
