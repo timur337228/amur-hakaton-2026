@@ -68,6 +68,8 @@ uploads/
 exports/
 reports/
 generated_reports/
+storage/
+.test_tmp/
 tmp/
 temp/
 
