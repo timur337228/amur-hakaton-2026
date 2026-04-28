@@ -17,6 +17,8 @@ from ..schemas import (
     AnalyticsResolveTextResponse,
     AnalyticsRow,
     AnalyticsTimeseriesPoint,
+    PreparedAnalyticsExample,
+    PreparedAnalyticsExamplesResponse,
 )
 from .llm import LLMConfigurationError, LLMServiceError, resolve_text_query_to_request_patch
 
@@ -113,6 +115,37 @@ FILTER_OPTION_FIELDS = {
     "document_numbers": BudgetFact.document_number,
     "document_ids": BudgetFact.document_id,
 }
+_PREPARED_EXAMPLES_CACHE: dict[str, PreparedAnalyticsExamplesResponse] = {}
+
+PREPARED_EXAMPLE_SPECS = (
+    (
+        "Покажи лимиты по Благовещенску по месяцам",
+        "Лимиты по Благовещенску",
+        {
+            "metrics": ["limits"],
+            "filters": {"object_query": "Благовещенск"},
+            "group_by": ["month"],
+        },
+    ),
+    (
+        "Покажи кассовые выплаты по 0502",
+        "Кассовые выплаты по 0502",
+        {
+            "metrics": ["cash_payments"],
+            "filters": {"kfsr_code": "0502"},
+            "group_by": ["month"],
+        },
+    ),
+    (
+        "Покажи сумму контрактов по источнику gz",
+        "Контракты по gz",
+        {
+            "metrics": ["contract_amount"],
+            "filters": {"source_groups": ["gz"]},
+            "group_by": ["month"],
+        },
+    ),
+)
 
 
 class AnalyticsValidationError(ValueError):
@@ -253,6 +286,40 @@ def analytics_filter_options(db: Session, batch_id: str, limit: int = 200) -> An
         limit_per_field=limit,
         **values,
     )
+
+
+def prepared_analytics_examples(db: Session, batch_id: str) -> PreparedAnalyticsExamplesResponse:
+    cached = _PREPARED_EXAMPLES_CACHE.get(batch_id)
+    if cached is not None:
+        return cached.model_copy(deep=True)
+
+    examples: list[PreparedAnalyticsExample] = []
+    for prompt, title, payload in PREPARED_EXAMPLE_SPECS:
+        request = AnalyticsQueryRequest.model_validate(
+            {
+                "batch_id": batch_id,
+                "text_query": prompt,
+                "include_rows": True,
+                "include_charts": True,
+                **payload,
+            }
+        )
+        response = run_analytics_query(db, request)
+        response.meta.llm_applied = False
+        response.meta.text_query = prompt
+        response.meta.resolved_request = _serialize_resolved_request(request)
+        response.meta.warning = None
+        examples.append(
+            PreparedAnalyticsExample(
+                prompt=prompt,
+                title=title,
+                resolved_request=_serialize_resolved_request(request),
+                response=response,
+            )
+        )
+    response = PreparedAnalyticsExamplesResponse(batch_id=batch_id, examples=examples)
+    _PREPARED_EXAMPLES_CACHE[batch_id] = response.model_copy(deep=True)
+    return response
 
 
 def _build_conditions(request: AnalyticsQueryRequest, metrics: list[str] | None) -> list:

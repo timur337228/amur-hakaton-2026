@@ -235,6 +235,18 @@ class AnalyticsResolveTextResponse(BaseModel):
     warning: str | None = None
 
 
+class PreparedAnalyticsExample(BaseModel):
+    prompt: str
+    title: str
+    resolved_request: dict
+    response: AnalyticsQueryResponse
+
+
+class PreparedAnalyticsExamplesResponse(BaseModel):
+    batch_id: str
+    examples: list[PreparedAnalyticsExample]
+
+
 class AudioTranscriptWord(BaseModel):
     word: str
     start: float | None = None

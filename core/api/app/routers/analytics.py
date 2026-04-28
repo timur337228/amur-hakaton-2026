@@ -18,6 +18,7 @@ from ..schemas import (
     AnalyticsExportRequest,
     AnalyticsFilterOptionsResponse,
     AnalyticsOptionsResponse,
+    PreparedAnalyticsExamplesResponse,
     AnalyticsQueryRequest,
     AnalyticsQueryResponse,
     AnalyticsResolveTextResponse,
@@ -28,6 +29,7 @@ from ..services.analytics import (
     analytics_filter_options,
     analytics_options,
     distinct_field_values,
+    prepared_analytics_examples,
     resolve_analytics_text,
     run_analytics_request,
 )
@@ -141,6 +143,19 @@ def get_filter_options(
     if not db.get(ImportBatch, batch_id):
         raise HTTPException(status_code=404, detail="Import batch not found.")
     return analytics_filter_options(db, batch_id=batch_id, limit=limit)
+
+
+@router.get("/prepared-examples", response_model=PreparedAnalyticsExamplesResponse)
+def get_prepared_examples(
+    batch_id: str,
+    db: Session = Depends(get_db),
+) -> PreparedAnalyticsExamplesResponse:
+    if not db.get(ImportBatch, batch_id):
+        raise HTTPException(status_code=404, detail="Import batch not found.")
+    try:
+        return prepared_analytics_examples(db, batch_id=batch_id)
+    except AnalyticsValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/values", response_model=AnalyticsValuesResponse)

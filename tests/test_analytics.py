@@ -22,6 +22,7 @@ from core.api.app import db as db_module  # noqa: E402
 from core.api.app.db import Base, SessionLocal  # noqa: E402
 from core.api.app.models import BudgetFact, ImportBatch  # noqa: E402
 from core.api.app.routers.analytics import export_analytics_xlsx, get_filter_options, query_analytics, resolve_text  # noqa: E402
+from core.api.app.routers.analytics import get_prepared_examples  # noqa: E402
 from core.api.app.routers.analytics import transcribe_audio  # noqa: E402
 from core.api.app.routers.imports import get_import_preview, get_import_stats  # noqa: E402
 from core.api.app.schemas import (  # noqa: E402
@@ -206,6 +207,31 @@ class AnalyticsTests(unittest.TestCase):
                 get_filter_options("missing-batch", db=db)
 
         self.assertEqual(error.exception.status_code, 404)
+
+    def test_prepared_examples_endpoint_returns_fixed_demo_queries(self) -> None:
+        with SessionLocal() as db:
+            response = get_prepared_examples("batch-1", db)
+
+        self.assertEqual(response.batch_id, "batch-1")
+        self.assertEqual(len(response.examples), 3)
+        prompts = {item.prompt: item for item in response.examples}
+
+        limits_example = prompts["Покажи лимиты по Благовещенску по месяцам"]
+        self.assertEqual(limits_example.title, "Лимиты по Благовещенску")
+        self.assertEqual(limits_example.resolved_request["metrics"], ["limits"])
+        self.assertEqual(limits_example.resolved_request["filters"]["object_query"], "Благовещенск")
+        self.assertEqual(limits_example.response.summary["limits"], Decimal("300.00"))
+        self.assertFalse(limits_example.response.meta.llm_applied)
+
+        cash_example = prompts["Покажи кассовые выплаты по 0502"]
+        self.assertEqual(cash_example.resolved_request["metrics"], ["cash_payments"])
+        self.assertEqual(cash_example.resolved_request["filters"]["kfsr_code"], "0502")
+        self.assertEqual(cash_example.response.summary["cash_payments"], Decimal("1049.00"))
+
+        contracts_example = prompts["Покажи сумму контрактов по источнику gz"]
+        self.assertEqual(contracts_example.resolved_request["metrics"], ["contract_amount"])
+        self.assertEqual(contracts_example.resolved_request["filters"]["source_groups"], ["gz"])
+        self.assertEqual(contracts_example.response.summary["contract_amount"], Decimal("500.00"))
 
     def test_resolve_analytics_request_merges_llm_and_explicit_fields(self) -> None:
         request = AnalyticsQueryRequest(

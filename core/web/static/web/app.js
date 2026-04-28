@@ -7,6 +7,8 @@ const state = {
   hasQueryResult: false,
   activeRecording: null,
   pointerRecordingMode: false,
+  preparedExamples: {},
+  activePreparedPrompt: null,
 };
 
 const elements = {
@@ -95,9 +97,12 @@ function bindEvents() {
   elements.recordAudioBtn.addEventListener("pointerleave", wrapAsync(handleVoicePointerLeave));
   elements.runQueryBtn.addEventListener("click", wrapAsync(runQuery));
   elements.exportBtn.addEventListener("click", wrapAsync(exportXlsx));
+  bindPreparedExampleTracking();
   elements.promptChips.forEach((chip) =>
     chip.addEventListener("click", () => {
-      elements.textQueryInput.value = chip.dataset.prompt || "";
+      const prompt = chip.dataset.prompt || "";
+      elements.textQueryInput.value = prompt;
+      state.activePreparedPrompt = prompt || null;
       elements.textQueryInput.focus();
     })
   );
@@ -500,6 +505,8 @@ async function tryLoadBatch(batchId) {
 
 async function loadBatch(batchId, options = {}) {
   ensureBatch(batchId);
+  state.preparedExamples = {};
+  state.activePreparedPrompt = null;
   setBadge(elements.batchStatus, "загрузка", "muted");
 
   let batch = await fetchJson(apiUrl(`/api/v1/imports/${batchId}`));
@@ -533,6 +540,7 @@ async function loadBatch(batchId, options = {}) {
   fillFilterOptions(filterOptions);
   renderPreview(preview);
   resetQueryPresentation();
+  await warmPreparedExamples(batchId);
   setBadge(
     elements.batchStatus,
     batch.status === "completed_with_errors" ? "готов с ошибками" : "набор готов",
@@ -543,6 +551,17 @@ async function loadBatch(batchId, options = {}) {
     batch.status === "completed_with_errors" ? "импорт с предупреждениями" : "данные загружены",
     batch.status === "completed_with_errors" ? "warn" : "ok"
   );
+}
+
+async function warmPreparedExamples(batchId) {
+  try {
+    const response = await fetchJson(
+      apiUrl(`/api/v1/analytics/prepared-examples?batch_id=${encodeURIComponent(batchId)}`)
+    );
+    state.preparedExamples = Object.fromEntries((response.examples || []).map((item) => [item.prompt, item]));
+  } catch (_error) {
+    state.preparedExamples = {};
+  }
 }
 
 async function waitForBatchReady(batchId, initialBatch) {
@@ -640,11 +659,14 @@ async function runQuery() {
   elements.exportBtn.disabled = true;
   try {
     const payload = buildRequestPayload();
-    const response = await fetchJson(apiUrl("/api/v1/analytics/query"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const preparedExample = getPreparedExampleResponse(payload);
+    const response = preparedExample
+      ? preparedExample.response
+      : await fetchJson(apiUrl("/api/v1/analytics/query"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
     if (response.meta?.warning) {
       showToast(response.meta.warning);
     }
@@ -718,6 +740,75 @@ function buildRequestPayload() {
     include_rows: true,
     include_charts: true,
   };
+}
+
+function bindPreparedExampleTracking() {
+  const resetPreparedPrompt = () => {
+    state.activePreparedPrompt = null;
+  };
+
+  [
+    elements.textQueryInput,
+    elements.dateFromInput,
+    elements.dateToInput,
+    elements.objectQueryInput,
+    elements.organizationQueryInput,
+    elements.budgetQueryInput,
+    elements.kfsrCodeInput,
+    elements.kcsrCodeInput,
+    elements.kvrCodeInput,
+    elements.fundingSourceInput,
+  ].forEach((element) => {
+    if (!element) {
+      return;
+    }
+    element.addEventListener("input", () => {
+      if (element === elements.textQueryInput && state.activePreparedPrompt === textValue(elements.textQueryInput)) {
+        return;
+      }
+      resetPreparedPrompt();
+    });
+    element.addEventListener("change", resetPreparedPrompt);
+  });
+
+  document.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+    if (target.name === "metric" || target.name === "source_group" || target.name === "group_by") {
+      resetPreparedPrompt();
+    }
+  });
+}
+
+function getPreparedExampleResponse(payload) {
+  const prompt = state.activePreparedPrompt;
+  if (!prompt) {
+    return null;
+  }
+  if ((payload.text_query || "") !== prompt) {
+    return null;
+  }
+  if (payload.date_from || payload.date_to || payload.metrics) {
+    return null;
+  }
+  if (!Array.isArray(payload.group_by) || payload.group_by.length !== 1 || payload.group_by[0] !== "month") {
+    return null;
+  }
+
+  const filters = payload.filters || {};
+  const hasManualFilters = Object.values(filters).some((value) => {
+    if (Array.isArray(value)) {
+      return value.length > 0;
+    }
+    return Boolean(value);
+  });
+  if (hasManualFilters) {
+    return null;
+  }
+
+  return state.preparedExamples[prompt] || null;
 }
 
 function renderPreview(preview) {
@@ -1086,6 +1177,8 @@ function ensureBatch(batchId) {
 
 function clearBatchState() {
   state.batchId = "";
+  state.preparedExamples = {};
+  state.activePreparedPrompt = null;
   localStorage.removeItem("budgetAnalytics.batchId");
 }
 
