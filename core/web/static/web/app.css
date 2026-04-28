@@ -53,7 +53,7 @@ summary {
 }
 
 .page-header {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 1fr;
   align-items: start;
   margin-bottom: 20px;
 }
@@ -101,12 +101,6 @@ summary {
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-.header-actions {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
 }
 
 .overview-grid {
@@ -189,6 +183,12 @@ summary {
 
 .button.primary:hover {
   background: var(--primary-strong);
+}
+
+.button:disabled {
+  cursor: default;
+  opacity: 0.7;
+  transform: none;
 }
 
 .button.secondary {
@@ -316,15 +316,42 @@ summary {
 }
 
 .filter-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .filter-grid.compact {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
 .advanced-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.query-actions {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.query-actions-copy {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.query-actions-copy strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.query-actions-buttons {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 input,
@@ -520,8 +547,39 @@ th {
   z-index: 30;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 .hidden {
   display: none;
+}
+
+.button.is-loading {
+  position: relative;
+  pointer-events: none;
+}
+
+.button.is-loading::after {
+  content: "";
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  display: inline-block;
+  margin-left: 10px;
+  vertical-align: -2px;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 code {
@@ -540,6 +598,10 @@ code {
   .filter-grid,
   .filter-grid.compact {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .query-actions {
+    align-items: stretch;
   }
 }
 
@@ -569,13 +631,13 @@ code {
     grid-template-columns: 1fr;
   }
 
-  .header-actions,
-  .dropzone-actions {
+  .dropzone-actions,
+  .query-actions-buttons {
     width: 100%;
   }
 
-  .header-actions .button,
-  .dropzone-actions .button {
+  .dropzone-actions .button,
+  .query-actions-buttons .button {
     flex: 1 1 auto;
   }
 

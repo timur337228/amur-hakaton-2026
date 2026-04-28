@@ -5,6 +5,7 @@ const ARCHIVE_EXTENSIONS = [".zip", ".rar", ".7z"];
 const state = {
   batchId: localStorage.getItem("budgetAnalytics.batchId") || "",
   filterOptions: null,
+  hasQueryResult: false,
 };
 
 const elements = {
@@ -32,6 +33,9 @@ const elements = {
   sourceGroupsOptions: document.getElementById("source-groups-options"),
   runQueryBtn: document.getElementById("run-query-btn"),
   exportBtn: document.getElementById("export-btn"),
+  resultsSummarySection: document.getElementById("results-summary-section"),
+  chartsSection: document.getElementById("charts-section"),
+  resultsTableSection: document.getElementById("results-table-section"),
   summaryCards: document.getElementById("summary-cards"),
   timeseriesChart: document.getElementById("timeseries-chart"),
   cumulativeChart: document.getElementById("cumulative-chart"),
@@ -70,6 +74,7 @@ async function initialize() {
   renderGroupByOptions();
   bindEvents();
   renderEmptyState();
+  elements.exportBtn.disabled = true;
   await bootstrapDataset();
 }
 
@@ -388,8 +393,7 @@ async function waitForBatchReady(batchId, initialBatch) {
 
 function renderBatchMeta(batch, stats) {
   const parts = [
-    `batch: ${batch.batch_id}`,
-    `создан: ${formatDateTime(batch.created_at)}`,
+    `Набор загружен: ${formatDateTime(batch.created_at)}`,
   ];
   if (stats.date_min || stats.date_max) {
     parts.push(`период: ${stats.date_min || "—"} — ${stats.date_max || "—"}`);
@@ -464,43 +468,62 @@ function renderSourceGroupOptions(sourceGroups) {
 
 async function runQuery() {
   ensureBatch(state.batchId);
-  const payload = buildRequestPayload();
-  const response = await fetchJson(apiUrl("/api/v1/analytics/query"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (response.meta?.warning) {
-    showToast(response.meta.warning);
-  }
+  const hadQueryResult = state.hasQueryResult;
+  setButtonLoading(elements.runQueryBtn, true, "Показываю");
+  elements.exportBtn.disabled = true;
+  try {
+    const payload = buildRequestPayload();
+    const response = await fetchJson(apiUrl("/api/v1/analytics/query"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (response.meta?.warning) {
+      showToast(response.meta.warning);
+    }
 
-  setBadge(elements.queryStatus, `${formatInt(response.meta.rows_count)} строк`, "ok");
-  renderSummaryCards(response.summary, response.execution_percent);
-  renderResults(response.rows || []);
-  renderCharts(response.charts);
+    state.hasQueryResult = true;
+    toggleResultsVisibility(true);
+    elements.exportBtn.disabled = false;
+    setBadge(elements.queryStatus, `${formatInt(response.meta.rows_count)} строк`, "ok");
+    renderSummaryCards(response.summary, response.execution_percent);
+    renderResults(response.rows || []);
+    renderCharts(response.charts);
+  } finally {
+    if (!state.hasQueryResult && hadQueryResult) {
+      state.hasQueryResult = true;
+    }
+    elements.exportBtn.disabled = !state.hasQueryResult;
+    setButtonLoading(elements.runQueryBtn, false);
+  }
 }
 
 async function exportXlsx() {
   ensureBatch(state.batchId);
-  const payload = buildRequestPayload();
-  const response = await fetch(apiUrl("/api/v1/analytics/export/xlsx"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    throw new Error(await readError(response));
+  setButtonLoading(elements.exportBtn, true, "Готовлю Excel");
+  try {
+    const payload = buildRequestPayload();
+    const response = await fetch(apiUrl("/api/v1/analytics/export/xlsx"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(await readError(response));
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const fileNameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/);
+    const fileName = fileNameMatch ? decodeURIComponent(fileNameMatch[1]) : "analytics.xlsx";
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+  } finally {
+    setButtonLoading(elements.exportBtn, false);
   }
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  const disposition = response.headers.get("Content-Disposition") || "";
-  const fileNameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/);
-  const fileName = fileNameMatch ? decodeURIComponent(fileNameMatch[1]) : "analytics.xlsx";
-  link.href = url;
-  link.download = fileName;
-  link.click();
-  URL.revokeObjectURL(url);
 }
 
 function buildRequestPayload() {
@@ -760,6 +783,8 @@ function renderTable(table, rows) {
 }
 
 function renderEmptyState() {
+  state.hasQueryResult = false;
+  toggleResultsVisibility(false);
   renderDatasetSummary([]);
   renderSummaryCards({});
   setEmptyChart(elements.timeseriesChart);
@@ -771,9 +796,12 @@ function renderEmptyState() {
   setBadge(elements.previewStatus, "нет данных", "muted");
   setBadge(elements.queryStatus, "нет данных", "muted");
   elements.batchMeta.textContent = "Если папка project_file найдена, система подключит её автоматически.";
+  elements.exportBtn.disabled = true;
 }
 
 function resetQueryPresentation() {
+  state.hasQueryResult = false;
+  toggleResultsVisibility(false);
   renderSummaryCards({});
   setEmptyChart(elements.timeseriesChart);
   setEmptyChart(elements.cumulativeChart);
@@ -781,6 +809,13 @@ function resetQueryPresentation() {
   setEmptyChart(elements.yearlyChart);
   renderTable(elements.resultsTable, []);
   setBadge(elements.queryStatus, "нет данных", "muted");
+  elements.exportBtn.disabled = true;
+}
+
+function toggleResultsVisibility(visible) {
+  elements.resultsSummarySection.hidden = !visible;
+  elements.chartsSection.hidden = !visible;
+  elements.resultsTableSection.hidden = !visible;
 }
 
 function checkedValues(name) {
@@ -888,6 +923,15 @@ function showToast(message) {
 function setBadge(element, text, mode) {
   element.textContent = text;
   element.className = `badge ${mode}`;
+}
+
+function setButtonLoading(button, loading, label = null) {
+  if (!button.dataset.defaultLabel) {
+    button.dataset.defaultLabel = button.textContent;
+  }
+  button.disabled = loading || (button === elements.exportBtn && !state.hasQueryResult);
+  button.classList.toggle("is-loading", loading);
+  button.textContent = loading ? (label || button.dataset.defaultLabel) : button.dataset.defaultLabel;
 }
 
 function prettyMetricName(metric) {
