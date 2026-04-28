@@ -27,6 +27,36 @@ from ..services.import_jobs import get_import_job_runner
 router = APIRouter(prefix="/api/v1/imports", tags=["imports"])
 
 
+@router.post("/default", response_model=ImportBatchResponse, status_code=status.HTTP_202_ACCEPTED)
+def import_default_dataset(db: Session = Depends(get_db)) -> ImportBatchResponse:
+    settings = get_settings()
+    if not settings.allow_local_import:
+        raise HTTPException(status_code=403, detail="Default local dataset import is disabled.")
+
+    source_path = (settings.project_root / "project_file").resolve()
+    if not source_path.exists():
+        raise HTTPException(status_code=404, detail="Default project_file folder not found.")
+
+    existing_batch = db.execute(
+        select(ImportBatch)
+        .where(
+            ImportBatch.input_type == "local_path",
+            ImportBatch.original_name == "project_file",
+            ImportBatch.status != "failed",
+        )
+        .order_by(ImportBatch.created_at.desc(), ImportBatch.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if existing_batch:
+        return _batch_response(existing_batch)
+
+    service = ImportService(db)
+    batch = service.create_batch(input_type="local_path", original_name="project_file")
+    batch = service.mark_batch_queued(batch, "Queued default project_file import.")
+    get_import_job_runner().enqueue_local_path(batch.id, source_path)
+    return _batch_response(batch)
+
+
 @router.post("/archive", response_model=ImportBatchResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_archive(
     file: Annotated[UploadFile, File(description="ZIP, RAR or 7Z archive with project folders")],

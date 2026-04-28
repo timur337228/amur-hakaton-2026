@@ -11,235 +11,243 @@
   <link rel="stylesheet" href="{% static 'web/app.css' %}">
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar">
+  <div class="page-shell">
+    <header class="page-header">
       <div class="brand">
         <div class="brand-mark">BA</div>
-        <div>
-          <h1>Budget Analytics</h1>
-          <p>Импорт, разбор и сводки по бюджетным CSV</p>
+        <div class="brand-copy">
+          <span class="eyebrow">Бюджетная аналитика</span>
+          <h1>Простой интерфейс для поиска и сравнения показателей</h1>
+          <p>Система сама подхватывает <code>project_file</code>, если он есть, или принимает архив и папку через перетаскивание.</p>
         </div>
       </div>
 
-      <section class="panel">
-        <div class="panel-header">
-          <h2>Импорт</h2>
+      <div class="header-actions">
+        <button id="run-query-btn" class="button primary" type="button">Показать аналитику</button>
+        <button id="export-btn" class="button secondary" type="button">Скачать Excel</button>
+      </div>
+    </header>
+
+    <section class="overview-grid">
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Загрузка</span>
+            <h2>Добавь данные один раз</h2>
+          </div>
           <span id="import-status-badge" class="badge muted">ожидание</span>
         </div>
 
-        <div class="stack">
-          <label class="field">
-            <span>Локальная папка</span>
-            <div class="inline">
-              <input id="local-path-input" type="text" value="project_file" placeholder="project_file">
-              <button id="local-import-btn" class="button primary" type="button">Импорт</button>
-            </div>
-          </label>
-
-          <label class="field">
-            <span>Архив</span>
-            <input id="archive-input" type="file" accept=".zip,.rar,.7z">
-          </label>
-
-          <label class="field">
-            <span>Папка с CSV</span>
-            <input id="folder-input" type="file" webkitdirectory directory multiple>
-          </label>
-
-          <div class="field">
-            <span>Текущий batch</span>
-            <div class="inline">
-              <input id="batch-id-input" type="text" placeholder="batch_id">
-              <button id="load-batch-btn" class="button ghost" type="button">Загрузить</button>
-            </div>
+        <div id="import-dropzone" class="dropzone" tabindex="0" role="button" aria-label="Перетащите архив или папку">
+          <div class="dropzone-icon">+</div>
+          <div class="dropzone-copy">
+            <strong>Перетащите архив или папку сюда</strong>
+            <p>Если это архив, система отправит его как архив. Если это папка или набор файлов, система сама соберёт структуру и загрузит как папку.</p>
           </div>
+          <div class="dropzone-actions">
+            <button id="choose-archive-btn" class="button ghost" type="button">Выбрать архив</button>
+            <button id="choose-folder-btn" class="button ghost" type="button">Выбрать папку</button>
+          </div>
+          <input id="archive-input" type="file" accept=".zip,.rar,.7z" hidden>
+          <input id="folder-input" type="file" webkitdirectory directory multiple hidden>
         </div>
+
+        <p class="helper-text">Локальная папка <code>project_file</code> подключается автоматически при открытии страницы. Отдельное поле для локального пути скрыто, чтобы не перегружать интерфейс.</p>
       </section>
 
-      <section class="panel compact">
-        <div class="panel-header">
-          <h2>Набор</h2>
-          <span id="batch-status" class="badge muted">не выбран</span>
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Набор данных</span>
+            <h2>Текущий источник</h2>
+          </div>
+          <span id="batch-status" class="badge muted">не загружен</span>
         </div>
+
         <div id="dataset-summary" class="stats-grid"></div>
+        <p id="batch-meta" class="meta-note">После импорта здесь появятся размер набора, даты и служебный идентификатор.</p>
       </section>
+    </section>
 
-      <section class="panel compact">
-        <div class="panel-header">
-          <h2>Подсказки</h2>
-        </div>
-        <div class="hint-list">
-          <button class="chip prompt-chip" data-prompt="Покажи лимиты по Благовещенску по месяцам">Лимиты по Благовещенску</button>
-          <button class="chip prompt-chip" data-prompt="Покажи сумму контрактов по источнику gz">Контракты по gz</button>
-          <button class="chip prompt-chip" data-prompt="Покажи кассовые выплаты по 0502">Кассовые выплаты по 0502</button>
-        </div>
-      </section>
-    </aside>
-
-    <main class="workspace">
-      <section class="hero">
+    <section class="card query-card">
+      <div class="section-head">
         <div>
-          <h2>Конструктор аналитических выборок</h2>
-          <p>Загрузи набор, проверь превью, задай фильтры или текстовый запрос и скачай сводку в Excel.</p>
+          <span class="eyebrow">Запрос</span>
+          <h2>Сформулируй вопрос обычным языком</h2>
         </div>
-        <div class="hero-actions">
-          <button id="resolve-btn" class="button ghost" type="button">Понять запрос</button>
-          <button id="run-query-btn" class="button primary" type="button">Построить сводку</button>
-          <button id="export-btn" class="button secondary" type="button">Скачать XLSX</button>
-        </div>
-      </section>
+      </div>
 
-      <section class="workspace-grid">
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Запрос</h2>
-            <span id="llm-badge" class="badge muted">параметры</span>
-          </div>
+      <label class="search-field">
+        <span>Главный запрос</span>
+        <textarea id="text-query-input" rows="3" placeholder="Например: Покажи лимиты по Благовещенску по месяцам"></textarea>
+      </label>
 
-          <div class="stack">
+      <div class="prompt-row">
+        <button class="chip prompt-chip" data-prompt="Покажи лимиты по Благовещенску по месяцам">Лимиты по Благовещенску</button>
+        <button class="chip prompt-chip" data-prompt="Покажи кассовые выплаты по 0502">Кассовые выплаты по 0502</button>
+        <button class="chip prompt-chip" data-prompt="Покажи сумму контрактов по источнику gz">Контракты по gz</button>
+      </div>
+
+      <div class="filter-grid">
+        <label class="field">
+          <span>Объект</span>
+          <input id="object-query-input" type="text" list="object-options" placeholder="Благовещенск">
+        </label>
+        <label class="field">
+          <span>Организация</span>
+          <input id="organization-query-input" type="text" list="organization-options" placeholder="Администрация">
+        </label>
+        <label class="field">
+          <span>Дата от</span>
+          <input id="date-from-input" type="date">
+        </label>
+        <label class="field">
+          <span>Дата до</span>
+          <input id="date-to-input" type="date">
+        </label>
+      </div>
+
+      <details class="advanced-panel">
+        <summary>Дополнительные фильтры</summary>
+
+        <div class="advanced-content">
+          <div class="filter-grid compact">
             <label class="field">
-              <span>Текстовый запрос</span>
-              <textarea id="text-query-input" rows="3" placeholder="Например: покажи лимиты по Благовещенску по месяцам"></textarea>
+              <span>Бюджет</span>
+              <input id="budget-query-input" type="text" list="budget-options" placeholder="Бюджет города">
             </label>
-
-            <div class="grid two">
-              <label class="field">
-                <span>Дата от</span>
-                <input id="date-from-input" type="date">
-              </label>
-              <label class="field">
-                <span>Дата до</span>
-                <input id="date-to-input" type="date">
-              </label>
-            </div>
-
-            <div class="grid three">
-              <label class="field">
-                <span>Объект</span>
-                <input id="object-query-input" type="text" list="object-options" placeholder="Благовещенск">
-              </label>
-              <label class="field">
-                <span>Организация</span>
-                <input id="organization-query-input" type="text" list="organization-options" placeholder="Администрация">
-              </label>
-              <label class="field">
-                <span>Бюджет</span>
-                <input id="budget-query-input" type="text" list="budget-options" placeholder="Бюджет города">
-              </label>
-            </div>
-
-            <div class="grid four">
-              <label class="field">
-                <span>КФСР</span>
-                <input id="kfsr-code-input" type="text" list="kfsr-options" placeholder="0502">
-              </label>
-              <label class="field">
-                <span>КЦСР</span>
-                <input id="kcsr-code-input" type="text" list="kcsr-options">
-              </label>
-              <label class="field">
-                <span>КВР</span>
-                <input id="kvr-code-input" type="text" list="kvr-options">
-              </label>
-              <label class="field">
-                <span>Источник</span>
-                <input id="funding-source-input" type="text" list="funding-source-options">
-              </label>
-            </div>
-
-            <div class="grid two">
-              <label class="field">
-                <span>Показатели</span>
-                <div id="metrics-options" class="option-grid"></div>
-              </label>
-              <label class="field">
-                <span>Группировка</span>
-                <div id="group-by-options" class="option-grid"></div>
-              </label>
-            </div>
-
             <label class="field">
-              <span>Источники данных</span>
-              <div id="source-groups-options" class="option-grid inline-options"></div>
+              <span>Источник средств</span>
+              <input id="funding-source-input" type="text" list="funding-source-options">
+            </label>
+            <label class="field">
+              <span>КФСР</span>
+              <input id="kfsr-code-input" type="text" list="kfsr-options" placeholder="0502">
+            </label>
+            <label class="field">
+              <span>КЦСР</span>
+              <input id="kcsr-code-input" type="text" list="kcsr-options">
+            </label>
+            <label class="field">
+              <span>КВР</span>
+              <input id="kvr-code-input" type="text" list="kvr-options">
             </label>
           </div>
 
-          <datalist id="object-options"></datalist>
-          <datalist id="organization-options"></datalist>
-          <datalist id="budget-options"></datalist>
-          <datalist id="kfsr-options"></datalist>
-          <datalist id="kcsr-options"></datalist>
-          <datalist id="kvr-options"></datalist>
-          <datalist id="funding-source-options"></datalist>
-        </section>
-
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Интерпретация</h2>
-            <span id="resolve-status" class="badge muted">нет данных</span>
+          <div class="advanced-grid">
+            <label class="field">
+              <span>Показатели</span>
+              <div id="metrics-options" class="option-grid"></div>
+            </label>
+            <label class="field">
+              <span>Группировка</span>
+              <div id="group-by-options" class="option-grid"></div>
+            </label>
           </div>
-          <pre id="resolved-request-output" class="json-box">{
-  "status": "ожидает запроса"
-}</pre>
-        </section>
+
+          <label class="field">
+            <span>Источники данных</span>
+            <div id="source-groups-options" class="option-grid inline-options"></div>
+          </label>
+        </div>
+      </details>
+
+      <datalist id="object-options"></datalist>
+      <datalist id="organization-options"></datalist>
+      <datalist id="budget-options"></datalist>
+      <datalist id="kfsr-options"></datalist>
+      <datalist id="kcsr-options"></datalist>
+      <datalist id="kvr-options"></datalist>
+      <datalist id="funding-source-options"></datalist>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Итоги</span>
+          <h2>Ключевые значения</h2>
+        </div>
+        <span id="query-status" class="badge muted">нет данных</span>
+      </div>
+      <div id="summary-cards" class="summary-grid"></div>
+    </section>
+
+    <section class="charts-grid">
+      <section class="card chart-card">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Динамика</span>
+            <h2>По месяцам</h2>
+          </div>
+        </div>
+        <div id="timeseries-chart" class="chart-surface empty">Нет данных</div>
       </section>
 
-      <section class="workspace-grid">
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Итоги</h2>
+      <section class="card chart-card">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Накопление</span>
+            <h2>Нарастающий итог</h2>
           </div>
-          <div id="summary-cards" class="summary-grid"></div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Графики</h2>
-          </div>
-          <div class="chart-stack">
-            <div>
-              <h3>По месяцам</h3>
-              <div id="timeseries-chart" class="chart-surface empty">Нет данных</div>
-            </div>
-            <div>
-              <h3>По показателям</h3>
-              <div id="metrics-chart" class="chart-surface empty">Нет данных</div>
-            </div>
-          </div>
-        </section>
+        </div>
+        <div id="cumulative-chart" class="chart-surface empty">Нет данных</div>
       </section>
 
-      <section class="workspace-grid">
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Превью набора</h2>
-            <span id="preview-status" class="badge muted">нет данных</span>
+      <section class="card chart-card">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Структура</span>
+            <h2>По показателям</h2>
           </div>
-          <div class="table-wrap">
-            <table id="preview-table">
-              <thead></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Результат запроса</h2>
-            <span id="query-status" class="badge muted">нет данных</span>
-          </div>
-          <div class="table-wrap">
-            <table id="results-table">
-              <thead></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </section>
+        </div>
+        <div id="metrics-chart" class="chart-surface empty">Нет данных</div>
       </section>
 
-      <div id="toast" class="toast hidden"></div>
-    </main>
+      <section class="card chart-card">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Сводка</span>
+            <h2>По годам</h2>
+          </div>
+        </div>
+        <div id="yearly-chart" class="chart-surface empty">Нет данных</div>
+      </section>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Результат</span>
+          <h2>Таблица ответа</h2>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="results-table">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <details class="card expandable-card">
+      <summary>
+        <div>
+          <span class="eyebrow">Источник</span>
+          <h2>Превью набора</h2>
+        </div>
+        <span id="preview-status" class="badge muted">нет данных</span>
+      </summary>
+      <div class="table-wrap">
+        <table id="preview-table">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </details>
+
+    <div id="toast" class="toast hidden"></div>
   </div>
+
   <script>
     window.BUDGET_API_BASE_URL = "{{ budget_api_base_url|escapejs }}";
   </script>
