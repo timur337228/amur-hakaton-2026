@@ -6,6 +6,10 @@
 
 - `FastAPI` отвечает только за API, импорт данных, аналитику, экспорт и speech-to-text
 - `Django` отвечает за пользовательский сайт
+## Демо
+
+Приложение доступно по ссылке:
+https://budget-analytics28.ru/
 
 ## Что умеет проект
 
@@ -16,7 +20,17 @@
 - экспортировать сводный результат в `Excel`
 - принимать голосовой запрос через `Whisper`
 - работать в режиме витрины `deploy: true`, когда пользователь не может загружать свои файлы
+## Стек
 
+- Backend API: FastAPI
+- Веб-приложение: Django
+- База данных: PostgreSQLPRO
+- ORM и миграции: SQLAlchemy + Alembic
+- Контейнеризация: Docker, Docker Compose
+- Reverse proxy и HTTPS: Caddy
+- Работа с речью: Whisper (API и локальный faster-whisper)
+- LLM: YandexGPT (дообучение через SFT) или API 302.ai Deepseek-v4 fast
+- Frontend: Django templates (SSR)
 ## Архитектура
 
 - `core/api` — API на `FastAPI`
