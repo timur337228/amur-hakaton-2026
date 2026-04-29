@@ -281,6 +281,45 @@ class AnalyticsTests(unittest.TestCase):
         self.assertEqual(response.meta.resolved_request["metrics"], ["limits"])
         self.assertEqual(response.summary["limits"], Decimal("300.00"))
 
+    def test_text_query_adds_sql_text_search_when_llm_leaves_subject_unresolved(self) -> None:
+        payload = AnalyticsQueryRequest(batch_id="batch-1", text_query="Сколько было потрачено за 2025 на авто тему")
+        llm_patch = AnalyticsLLMInterpretation(
+            metrics=["cash_payments"],
+            date_from=date(2025, 1, 1),
+            date_to=date(2025, 12, 31),
+            group_by=["month"],
+        )
+
+        with patch(
+            "core.api.app.services.analytics.resolve_text_query_to_request_patch",
+            return_value=llm_patch,
+        ):
+            with SessionLocal() as db:
+                response = query_analytics(payload, db)
+
+        self.assertTrue(response.meta.llm_applied)
+        self.assertEqual(response.meta.resolved_request["filters"]["text_search"], "авто")
+        self.assertEqual(response.summary, {})
+        self.assertEqual(response.meta.rows_count, 0)
+
+    def test_text_query_sql_search_can_restrict_broad_llm_request(self) -> None:
+        payload = AnalyticsQueryRequest(batch_id="batch-1", text_query="Покажи расходы по Благовещенску")
+        llm_patch = AnalyticsLLMInterpretation(
+            metrics=["cash_payments"],
+            group_by=["month"],
+        )
+
+        with patch(
+            "core.api.app.services.analytics.resolve_text_query_to_request_patch",
+            return_value=llm_patch,
+        ):
+            with SessionLocal() as db:
+                response = query_analytics(payload, db)
+
+        self.assertTrue(response.meta.llm_applied)
+        self.assertEqual(response.meta.resolved_request["filters"]["text_search"], "благовещенск")
+        self.assertEqual(response.summary["cash_payments"], Decimal("50.00"))
+
     def test_query_endpoint_keeps_llm_metrics_when_request_explicitly_sends_null_metrics(self) -> None:
         payload = AnalyticsQueryRequest(
             batch_id="batch-1",

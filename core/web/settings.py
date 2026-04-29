@@ -16,6 +16,8 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "budget-analytics-dev-secret-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() in {"1", "true", "yes", "on"}
 ALLOWED_HOSTS = _split_csv_env(os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver"))
+if DEBUG and "testserver" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append("testserver")
 
 INSTALLED_APPS = [
     "django.contrib.staticfiles",

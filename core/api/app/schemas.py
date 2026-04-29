@@ -111,6 +111,7 @@ class AnalyticsFilters(BaseModel):
     object_query: str | None = None
     budget_query: str | None = None
     organization_query: str | None = None
+    text_search: str | None = None
     document_id: str | None = None
     document_number: str | None = None
     kfsr_code: str | None = None

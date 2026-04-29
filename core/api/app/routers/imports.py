@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api/v1/imports", tags=["imports"])
 
 def _ensure_uploads_enabled() -> None:
     if get_settings().deploy_mode:
-        raise HTTPException(status_code=403, detail="Dataset uploads are disabled in deploy mode.")
+        raise HTTPException(status_code=403, detail="Загрузка новых файлов доступна только администраторам.")
 
 
 @router.post("/default", response_model=ImportBatchResponse, status_code=status.HTTP_202_ACCEPTED)

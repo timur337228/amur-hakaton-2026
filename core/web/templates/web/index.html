@@ -38,14 +38,14 @@
           class="dropzone{% if budget_deploy_mode %} is-disabled{% endif %}"
           tabindex="{% if budget_deploy_mode %}-1{% else %}0{% endif %}"
           role="button"
-          aria-label="Перетащите архив или папку"
+          aria-label="{% if budget_deploy_mode %}Загрузка доступна только администраторам{% else %}Перетащите архив или папку{% endif %}"
           aria-disabled="{% if budget_deploy_mode %}true{% else %}false{% endif %}"
         >
-          <div class="dropzone-icon">+</div>
+          <div class="dropzone-icon">{% if budget_deploy_mode %}!{% else %}+{% endif %}</div>
           <div class="dropzone-copy">
             {% if budget_deploy_mode %}
-              <strong>Загрузка отключена в режиме деплоя</strong>
-              <p>Сейчас доступен только уже подключённый источник данных. Импорт архивов и папок закрыт, чтобы интерфейс оставался стабильным для пользователей.</p>
+              <strong>Загрузка доступна только администраторам</strong>
+              <p>Для посетителей открыт просмотр уже подключённого набора данных. Чтобы добавить новый архив или папку, войдите в административный режим или обратитесь к администратору.</p>
             {% else %}
               <strong>Перетащите архив или папку сюда</strong>
               <p>Если это архив, система отправит его как архив. Если это папка или набор файлов, система сама соберёт структуру и загрузит как папку.</p>
@@ -57,8 +57,8 @@
           </div>
           {% if budget_deploy_mode %}
             <div class="dropzone-lock-note">
-              <span class="dropzone-lock-pill">Режим витрины</span>
-              <span>Загрузка новых файлов недоступна</span>
+              <span class="dropzone-lock-pill">Только админы</span>
+              <span>Импорт новых файлов закрыт для обычных пользователей</span>
             </div>
           {% endif %}
           <input id="archive-input" type="file" accept=".zip,.rar,.7z" hidden>

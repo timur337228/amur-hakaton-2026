@@ -231,7 +231,7 @@ summary {
   border-style: solid;
   border-color: var(--border);
   background: #f5f9ff;
-  cursor: not-allowed;
+  cursor: default;
   position: relative;
   overflow: hidden;
 }
@@ -268,6 +268,18 @@ summary {
   font-size: 28px;
   line-height: 1;
   font-weight: 500;
+}
+
+.dropzone.is-disabled .dropzone-icon {
+  background: var(--warn-soft);
+  border-color: #f0d2a4;
+  color: #9c6415;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.dropzone.is-disabled .dropzone-copy strong {
+  color: #9c6415;
 }
 
 .dropzone-copy strong {

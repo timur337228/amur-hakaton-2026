@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
+from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import Text, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..models import BudgetFact
@@ -68,6 +70,7 @@ FILTER_FIELD_LABELS = {
     "object_query": "Поиск по объекту",
     "budget_query": "Поиск по бюджету",
     "organization_query": "Поиск по организации",
+    "text_search": "Текстовый поиск",
     "document_id": "ID документа",
     "document_number": "Номер документа",
     "kfsr_code": "КФСР",
@@ -116,6 +119,115 @@ FILTER_OPTION_FIELDS = {
     "document_ids": BudgetFact.document_id,
 }
 _PREPARED_EXAMPLES_CACHE: dict[str, PreparedAnalyticsExamplesResponse] = {}
+
+TEXT_SEARCH_COLUMNS = (
+    BudgetFact.object_name,
+    BudgetFact.budget_name,
+    BudgetFact.organization_name,
+    BudgetFact.funding_source,
+    BudgetFact.document_number,
+    BudgetFact.document_id,
+    BudgetFact.kfsr_code,
+    BudgetFact.kcsr_code,
+    BudgetFact.kvr_code,
+    BudgetFact.kvsr_code,
+    BudgetFact.kesr_code,
+    BudgetFact.kosgu_code,
+    BudgetFact.purpose_code,
+    BudgetFact.source_file,
+    cast(BudgetFact.raw_data, Text),
+)
+
+TEXT_SEARCH_STOPWORDS = {
+    "а",
+    "был",
+    "была",
+    "были",
+    "было",
+    "в",
+    "во",
+    "выплат",
+    "выплата",
+    "выплаты",
+    "где",
+    "год",
+    "года",
+    "годам",
+    "году",
+    "данные",
+    "для",
+    "до",
+    "за",
+    "из",
+    "и",
+    "или",
+    "источник",
+    "источникам",
+    "источники",
+    "источнику",
+    "итого",
+    "как",
+    "какая",
+    "какие",
+    "какой",
+    "кассовые",
+    "кассовых",
+    "контракт",
+    "контрактам",
+    "контрактов",
+    "лимит",
+    "лимиты",
+    "месяц",
+    "месяцам",
+    "на",
+    "об",
+    "от",
+    "по",
+    "покажи",
+    "показать",
+    "получено",
+    "потрачен",
+    "потрачено",
+    "потраченные",
+    "потратили",
+    "оплат",
+    "оплата",
+    "платеж",
+    "платежи",
+    "про",
+    "договор",
+    "договоров",
+    "обязательства",
+    "остаток",
+    "нибудь",
+    "расход",
+    "расходы",
+    "сколько",
+    "средств",
+    "сумма",
+    "суммарно",
+    "суммы",
+    "соглашений",
+    "соглашения",
+    "тема",
+    "теме",
+    "темой",
+    "тему",
+    "траты",
+    "что",
+    "это",
+}
+
+TEXT_METRIC_HINTS = {
+    "cash_payments": ("кассов", "выбыти", "расход", "потра", "трат"),
+    "limits": ("лимит",),
+    "agreement_amount": ("соглаш",),
+    "contract_amount": ("контракт", "договор"),
+    "contract_payment": ("платеж", "оплат"),
+    "obligations_without_bo": ("без бо",),
+    "obligations": ("обязатель", "бо"),
+    "remaining_limits": ("остаток лимит",),
+}
 
 PREPARED_EXAMPLE_SPECS = (
     (
@@ -228,12 +340,14 @@ def resolve_analytics_request_details(
                 "LLM временно недоступен. Текстовый запрос не был интерпретирован, "
                 "поэтому использованы только ручные фильтры."
             )
-            explicit_request = request.model_copy(update={"text_query": None})
+            explicit_request = request.model_copy(update={"text_query": text_query})
             resolved_request = _merge_request_with_patch(explicit_request, None)
+            resolved_request = _apply_text_query_safety(resolved_request)
             return resolved_request, None, False, f"{warning} Причина: {exc}"
 
     normalized_request = request.model_copy(update={"text_query": text_query})
     resolved_request = _merge_request_with_patch(normalized_request, llm_patch)
+    resolved_request = _apply_text_query_safety(resolved_request)
     return resolved_request, llm_patch, llm_patch is not None, warning
 
 
@@ -322,6 +436,33 @@ def prepared_analytics_examples(db: Session, batch_id: str) -> PreparedAnalytics
     return response
 
 
+def _apply_text_query_safety(request: AnalyticsQueryRequest) -> AnalyticsQueryRequest:
+    text_query = _normalize_optional_text(request.text_query)
+    if not text_query:
+        return request
+
+    update_data: dict[str, object] = {}
+    if request.date_from is None and request.date_to is None:
+        year_range = _infer_single_year_range(text_query)
+        if year_range:
+            update_data["date_from"], update_data["date_to"] = year_range
+
+    if not request.metrics:
+        inferred_metric = _infer_metric_from_query_text(text_query)
+        if inferred_metric:
+            update_data["metrics"] = [inferred_metric]
+
+    filters = request.filters
+    if not _has_subject_filter(filters):
+        terms = _extract_text_search_terms(text_query)
+        if terms:
+            update_data["filters"] = filters.model_copy(update={"text_search": " ".join(terms)})
+
+    if not update_data:
+        return request
+    return request.model_copy(update=update_data)
+
+
 def _build_conditions(request: AnalyticsQueryRequest, metrics: list[str] | None) -> list:
     filters = request.filters
     conditions = [BudgetFact.batch_id == request.batch_id]
@@ -341,6 +482,8 @@ def _build_conditions(request: AnalyticsQueryRequest, metrics: list[str] | None)
         conditions.append(BudgetFact.budget_name.ilike(f"%{filters.budget_query}%"))
     if filters.organization_query:
         conditions.append(BudgetFact.organization_name.ilike(f"%{filters.organization_query}%"))
+    if filters.text_search:
+        conditions.extend(_text_search_conditions(filters.text_search))
 
     exact_filters = {
         "document_id": BudgetFact.document_id,
@@ -360,6 +503,138 @@ def _build_conditions(request: AnalyticsQueryRequest, metrics: list[str] | None)
             conditions.append(column == value)
 
     return conditions
+
+
+def _text_search_conditions(text_search: str) -> list:
+    terms = _extract_text_search_terms(text_search)
+    conditions = []
+    for term in terms:
+        likes = [f"%{variant}%" for variant in _text_search_term_variants(term)]
+        conditions.append(or_(*(column.ilike(like) for column in TEXT_SEARCH_COLUMNS for like in likes)))
+    return conditions
+
+
+def _text_search_term_variants(term: str) -> list[str]:
+    variants = [term, term.capitalize(), term.upper()]
+    result: list[str] = []
+    for variant in variants:
+        if variant not in result:
+            result.append(variant)
+    return result
+
+
+def _has_subject_filter(filters: AnalyticsFilters) -> bool:
+    return any(
+        getattr(filters, field_name)
+        for field_name in (
+            "object_query",
+            "budget_query",
+            "organization_query",
+            "text_search",
+            "document_id",
+            "document_number",
+            "kfsr_code",
+            "kcsr_code",
+            "kvr_code",
+            "kvsr_code",
+            "kesr_code",
+            "kosgu_code",
+            "purpose_code",
+            "funding_source",
+        )
+    )
+
+
+def _infer_single_year_range(text_query: str) -> tuple[date, date] | None:
+    years = {int(match) for match in re.findall(r"\b(19\d{2}|20\d{2})\b", text_query)}
+    if len(years) != 1:
+        return None
+    year = years.pop()
+    return date(year, 1, 1), date(year, 12, 31)
+
+
+def _infer_metric_from_query_text(text_query: str) -> str | None:
+    lowered = _normalize_search_text(text_query)
+    for metric, hints in TEXT_METRIC_HINTS.items():
+        if any(hint in lowered for hint in hints):
+            return metric if metric in METRIC_LABELS else None
+    return None
+
+
+def _extract_text_search_terms(text_query: str) -> list[str]:
+    terms: list[str] = []
+    for raw_term in re.findall(r"[A-Za-zА-Яа-яЁё0-9]+", text_query):
+        term = _normalize_search_text(raw_term)
+        if not term or len(term) < 3:
+            continue
+        if term.isdigit() or any(char.isdigit() for char in term):
+            continue
+        if term in TEXT_SEARCH_STOPWORDS:
+            continue
+        stemmed = _stem_text_search_term(term)
+        if len(stemmed) < 3 or stemmed in TEXT_SEARCH_STOPWORDS:
+            continue
+        if stemmed not in terms:
+            terms.append(stemmed)
+    return terms
+
+
+def _stem_text_search_term(term: str) -> str:
+    suffixes = (
+        "иями",
+        "ями",
+        "ами",
+        "ого",
+        "ему",
+        "ыми",
+        "ими",
+        "ской",
+        "скому",
+        "ские",
+        "ский",
+        "ская",
+        "ское",
+        "ого",
+        "его",
+        "ому",
+        "ему",
+        "ой",
+        "ей",
+        "ая",
+        "яя",
+        "ое",
+        "ее",
+        "ые",
+        "ие",
+        "ом",
+        "ем",
+        "ам",
+        "ям",
+        "ах",
+        "ях",
+        "ов",
+        "ев",
+        "ий",
+        "ый",
+        "ую",
+        "юю",
+        "а",
+        "я",
+        "ы",
+        "и",
+        "у",
+        "ю",
+        "е",
+        "о",
+    )
+    for suffix in suffixes:
+        if term.endswith(suffix) and len(term) - len(suffix) >= 4:
+            return term[: -len(suffix)]
+    return term
+
+
+def _normalize_search_text(value: str) -> str:
+    return value.lower().replace("ё", "е").strip()
 
 
 def _merge_request_with_patch(

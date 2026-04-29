@@ -61,7 +61,7 @@ TRANSCRIPT_NORMALIZATION_SYSTEM_PROMPT = (
 
 METRIC_HINTS = {
     "limits": ("лимит",),
-    "cash_payments": ("кассов", "выбыти"),
+    "cash_payments": ("кассов", "выбыти", "расход", "потра", "трат"),
     "agreement_amount": ("соглаш",),
     "contract_amount": ("контракт", "договор"),
     "contract_payment": ("платеж", "оплат"),

@@ -63,6 +63,7 @@ def _parameter_rows(response: AnalyticsQueryResponse) -> list[list[Any]]:
         ["Объект", filters.get("object_query") or ""],
         ["Организация", filters.get("organization_query") or ""],
         ["Бюджет", filters.get("budget_query") or ""],
+        ["Текстовый поиск", filters.get("text_search") or ""],
         ["КФСР", filters.get("kfsr_code") or ""],
         ["КЦСР", filters.get("kcsr_code") or ""],
         ["КВР", filters.get("kvr_code") or ""],

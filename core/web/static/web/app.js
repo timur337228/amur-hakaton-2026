@@ -1,5 +1,6 @@
 const API_BASE_URL = (window.BUDGET_API_BASE_URL || "").replace(/\/$/, "");
 const DEPLOY_MODE = Boolean(window.BUDGET_DEPLOY_MODE);
+const ADMIN_UPLOAD_ONLY_MESSAGE = "Загрузка новых файлов доступна только администраторам.";
 const IMPORT_TERMINAL_STATUSES = new Set(["completed", "completed_with_errors", "failed"]);
 const ARCHIVE_EXTENSIONS = [".zip", ".rar", ".7z"];
 const state = {
@@ -319,7 +320,7 @@ async function handleVoicePointerLeave(event) {
 
 async function handleDrop(event) {
   if (DEPLOY_MODE) {
-    showToast("В режиме деплоя загрузка файлов отключена.");
+    showToast(ADMIN_UPLOAD_ONLY_MESSAGE);
     return;
   }
   elements.dropzone.classList.remove("is-active");
@@ -413,7 +414,7 @@ async function readAllDirectoryEntries(reader) {
 
 async function uploadArchiveFile(file) {
   if (DEPLOY_MODE) {
-    showToast("В режиме деплоя загрузка файлов отключена.");
+    showToast(ADMIN_UPLOAD_ONLY_MESSAGE);
     return;
   }
   if (!isSupportedArchive(file.name)) {
@@ -435,7 +436,7 @@ async function uploadArchiveFile(file) {
 
 async function uploadFolderFiles(files) {
   if (DEPLOY_MODE) {
-    showToast("В режиме деплоя загрузка файлов отключена.");
+    showToast(ADMIN_UPLOAD_ONLY_MESSAGE);
     return;
   }
   setBadge(elements.importStatusBadge, "загрузка папки", "warn");
